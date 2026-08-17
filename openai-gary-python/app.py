@@ -72,7 +72,7 @@ def google_generate_chat_content():
     return json_data
 
 def google_generate_content(prompt):
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent"
     url += "?key=" + os.getenv("GOOGLE_API_KEY")
     
     json_chat = google_generate_chat_content()

@@ -43,12 +43,17 @@ servo movement, and will fail silently if it isn't listening.
 - Google AIY Voice HAT — supplies the button, the LED and text-to-speech
 - Raspberry Pi Camera Module on the CSI ribbon connector (optional; see limitations)
 
-The Arduino firmware is **not** in this repository. It is treated as a fixed API: the
-Pi sends it short ASCII commands (`HH:60`, `HM+15`) over serial, two letters for the
-servo plus an absolute or relative value. See `servo_api/pin_and_servos.py` for the
-servo map.
+The Arduino firmware is **not** in this repository. It lives in
+[ArduinoServoController-UART-InMoov](https://github.com/Lukeluca/ArduinoServoController-UART-InMoov),
+and is treated here as a fixed API: the Pi sends it short ASCII commands (`HH:60`,
+`HM+15`) over serial, two letters for the servo plus an absolute or relative value.
+See `servo_api/pin_and_servos.py` for the servo map.
 
 ## Setup
+
+First flash the Arduino with
+[ArduinoServoController-UART-InMoov](https://github.com/Lukeluca/ArduinoServoController-UART-InMoov)
+— nothing here can move a servo without it. Then:
 
 ```bash
 git clone <your-fork> gary

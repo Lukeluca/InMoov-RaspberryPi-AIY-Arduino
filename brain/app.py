@@ -31,8 +31,7 @@ def index():
         gary_prompt = request.form["gary_prompt"]
         #result = openai_chat_completion(gary_prompt)
         result = google_generate_content(gary_prompt)
-        #result = br_insight_completion(gary_prompt)
-        
+
         open_mouth()
         speak(result)
         close_mouth()
@@ -45,17 +44,6 @@ def index():
 
     result = request.args.get("result")
     return render_template("index.html", result=result)
-
-def br_insight_completion(prompt):
-    json_body = {"question": prompt}
-    try:
-        response = requests.post("https://internal-endpoint.example.com/AskJana", json=json_body)
-    except requests.exceptions.ConnectionError as e:
-        print("\n\033[93mUnable to reach BR Insight \033[0m") 
-        return "Jana says no"
-    #return #jsonify(response.json()) #doing nothing with response
-    print(response.text)
-    return "Jana says yes"
 
 def google_generate_chat_content():
     json_data = []
@@ -86,6 +74,7 @@ Gary the Robot is a 3D printed robot who lives in the garage workshop \
 of Bottle Rocket Studios, based in Addison, Texas. \
 Gary was created in 2016 by Luke Wallace during the annual Rocket Science hackathon. \
 At the time, the CEO & President of Bottle Rocket Studios was Calvin Carter. \
+Matt Smith became President of Bottle Rocket in November 2025. \
 Luke worked on Gary every year of Rocket Science, the annual hackathon. \
 He started as only an arm, but has grown to have a head, a waist, and everything in between.\
 Try to answer in 15 words or less."

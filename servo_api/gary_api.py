@@ -5,6 +5,7 @@ import datetime
 import json
 #import cv2
 import asyncio
+import threading
 from pin_and_servos import machinations
 
 import aiy.voice.tts
@@ -47,13 +48,27 @@ int getControlPin(char servo[]) {
 
 class Arduino:
     # /dev/ttyUSB0
+
+    # The serial port is a single shared resource, but Flask serves requests on
+    # multiple threads and the brain fires mouth commands as fire-and-forget
+    # threads, so two writes can overlap. When that happens one thread's
+    # readline() swallows the bytes the other is waiting for, and pyserial
+    # raises "device reports readiness to read but returned no data". The lock
+    # is on the class rather than the instance so it still holds if a second
+    # Arduino is constructed, as the Sight class does.
+    _serial_lock = threading.Lock()
+
     def __init__(self, ser):
         self.baud_rate = 115200
         self.ser = serial.Serial(ser, self.baud_rate, bytesize=8, timeout=2)
-        
+
         self.ser.readlines()
 
     def send_commands(self, formatted_commands):
+        with Arduino._serial_lock:
+            return self._send_commands_locked(formatted_commands)
+
+    def _send_commands_locked(self, formatted_commands):
         self.ser.write(formatted_commands.encode("ASCII"))
         res = Request()
         while True:

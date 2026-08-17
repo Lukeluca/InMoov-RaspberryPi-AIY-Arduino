@@ -112,8 +112,6 @@ These are real and worth understanding before you invest time:
   then closes — there is no lip-sync.
 - **Nothing starts on boot.** `start_all.sh` must be run manually, and its services
   die with the terminal that launched them unless detached.
-- **Both Flask apps run in debug mode**, so each spawns a reloader child. That means
-  the serial port is opened twice.
 - **`archive/`** holds superseded code kept for reference. It is not wired up.
 
 ## Layout
@@ -124,3 +122,7 @@ servo_api/   motion and speech output; owns the Arduino serial link
 scripts/     start_all.sh
 archive/     superseded earlier versions, not in use
 ```
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).

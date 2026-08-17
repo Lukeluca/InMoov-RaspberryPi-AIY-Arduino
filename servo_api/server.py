@@ -90,5 +90,9 @@ def info():
 if __name__ == "__main__":
     print("\n Gary is listening... \n")
     gary.set_serial(base_conf["usb_port"])    
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # debug=False is deliberate: the reloader would run this module twice and
+    # open /dev/ttyUSB0 in both processes, which makes reads race and fail with
+    # "multiple access on port". It also keeps the Werkzeug debugger console off
+    # a socket bound to 0.0.0.0.
+    app.run(debug=False, host="0.0.0.0", port=5000)
     

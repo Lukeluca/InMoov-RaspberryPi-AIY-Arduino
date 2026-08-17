@@ -1,0 +1,15 @@
+from requests import get, post
+from config import base_conf
+from argparse import ArgumentParser
+
+parser = ArgumentParser()
+
+parser.add_argument('-a', '--amount', help='send a specific amount for command');
+try:
+    args = parser.parse_args()
+    ip_address = base_conf["ip_address"]
+    commands = {"commands": ["HM30", "HM0"]}
+    req = post(f"{ip_address}/api/commands", json=commands)
+    print(req)
+except Exception as e:
+    print(e)

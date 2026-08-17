@@ -3,6 +3,11 @@
 *.env
 !.env.example
 
+# Backups of pre-change files may still contain inline keys
+*.bak
+*.bak-*
+*.save
+
 # Python
 venv/
 __pycache__/

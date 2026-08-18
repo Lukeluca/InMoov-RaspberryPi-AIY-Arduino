@@ -174,6 +174,42 @@ Gary to use them only when they help answer what was actually said, and never to
 remark on what he can see otherwise — so "how are you?" gets a normal answer
 while "what is on the table?" gets a real one.
 
+## Voice
+
+Gary speaks through Piper, a small neural text-to-speech model, falling back to
+the AIY image's Pico voice if Piper is not installed. Pico dates from 2013 and
+sounds like it.
+
+```bash
+./scripts/install-piper.sh
+systemctl --user restart gary-servo
+```
+
+Everything lands in `~/gary-tts`; delete that directory to go back to Pico.
+`servo_api/tts.py` picks the engine automatically, so a robot without Piper
+still talks.
+
+On 32-bit Raspberry Pi OS the install is not straightforward, and the script
+explains why at length. In short: current Piper needs Python 3.9+ and only
+ships 64-bit ARM wheels, and every standalone armv7 build - back to v1.0.0 -
+needs a newer glibc than buster provides. The script fetches a bullseye glibc
+into its own directory and runs Piper under that loader, leaving the system
+alone.
+
+| | Pico | Piper `alan-low`, `length_scale 0.75` |
+|---|---|---|
+| Synthesis | 0.12s | ~2.05s |
+| Playback | 5.09s | 4.47s |
+| Total per reply | ~5.4s | ~6.7s |
+
+Piper is kept resident, because loading the voice costs ~1.5s and spawning per
+reply pays it every time. Synthesis writes a file rather than streaming, which
+is a deliberate choice measured on this Pi - `servo_api/tts.py` documents the
+reasoning and what revisiting it would involve.
+
+Voice and speed are configurable with `GARY_PIPER_VOICE` and
+`GARY_PIPER_LENGTH_SCALE`; below 1.0 is faster speech.
+
 ## Remote console
 
 `http://<pi>:5004/` — a single page showing what Gary sees, with two boxes:

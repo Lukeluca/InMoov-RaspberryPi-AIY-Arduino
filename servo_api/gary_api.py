@@ -10,6 +10,8 @@ from pin_and_servos import machinations
 
 import aiy.voice.tts
 
+import tts
+
 # TODO: Send Gary data
 # -- Sending him movement information
 # -- define the request paramters
@@ -192,11 +194,8 @@ class Speech:
         pass
         
     def text2speech(self, text):
-        aiy.voice.tts.say(text, lang='en-GB', volume=50, pitch=69, speed=125)
-        #subprocess.call('espeak -s200 -a70 "' + text + '" 2>/dev/null', shell=True)
-        # -s is speed
-        # -a is volume (amplitude)
-        # see [eSpeak Docs](http://espeak.sourceforge.net/commands.html) for more customization
+        # Which engine, and why file rather than streaming, is all in tts.py.
+        tts.speak(text)
 
 '''
 class Sight:

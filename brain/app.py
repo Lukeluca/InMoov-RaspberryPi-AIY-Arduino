@@ -97,9 +97,9 @@ def index():
         logging.info("prompt received, %d camera frame(s) available", len(images))
         result = google_generate_content(gary_prompt, images)
 
-        open_mouth()
+        head_flourish()
         speak(result)
-        close_mouth()
+        head_recenter()
         
         #cache for future discussions, using the prompt as the key, and the result as the value
         cache[gary_prompt] = result
@@ -198,14 +198,19 @@ def speak(text):
         return
     return #jsonify(response.json()) #doing nothing with response
 
-def open_mouth():
-    json_body = {"commands": ["HM:75 HH:"+random.choice(["-","+"])+str(random.randint(5,15))+\
+# The mouth is no longer driven from here. The servo API opens and closes it
+# around the speech itself, which keeps the timing tight and means anything
+# that makes Gary talk gets a moving mouth. What is left here is the head
+# flourish: a small random movement as he starts talking, and a return to
+# centre when he stops.
+def head_flourish():
+    json_body = {"commands": ["HH:"+random.choice(["-","+"])+str(random.randint(5,15))+\
                               " HV:"+random.choice(["-","+"])+str(random.randint(5,15))]}
     async_arduino_command(json_body)
 
 
-def close_mouth():
-    json_body = {"commands": ["HM:0 HH:50 HV:50"]}
+def head_recenter():
+    json_body = {"commands": ["HH:50 HV:50"]}
     async_arduino_command(json_body)
 
 #fire and forget the commands by using a separate thread

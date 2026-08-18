@@ -3,6 +3,7 @@ from flask import Flask, request, Response
 from flask_cors import CORS, cross_origin
 from config import base_conf
 import json
+import threading
 
 app = Flask(__name__)
 cors = CORS(app, resources={r"/api/*": {"Access-Control-Allow-Origin": "*"}})
@@ -36,14 +37,48 @@ def home():
            "</BODY></HTML>"
 
 
+MOUTH_OPEN = "HM:75"
+MOUTH_CLOSED = "HM:0"
+
+
+def close_mouth():
+    """Shut the jaw. Runs on a background thread after an utterance."""
+    try:
+        gary.send_commands({"commands": [MOUTH_CLOSED]})
+    except Exception as e:
+        print("could not close the mouth: %s" % e)
+
+
 @cross_origin(app)
 @app.route("/api/voice/text2speech", methods=["POST"])
 def text_to_speech():
-    
+
     if request.method == "POST":
-        text = request.get_json()['text']
-        gary.speech.text2speech(text)
-    
+        body = request.get_json()
+        text = body['text']
+        # Moving the mouth belongs here rather than in whoever asked for the
+        # speech. This service owns the speaker and the servos, so everything
+        # that makes Gary talk gets a moving mouth without needing to know that
+        # the jaw is HM.
+        move_mouth = body.get('move_mouth', True)
+
+        if move_mouth:
+            # Synchronous: the jaw has to be open before the sound starts.
+            gary.send_commands({"commands": [MOUTH_OPEN]})
+        try:
+            gary.speech.text2speech(text)
+        finally:
+            # In a finally so a failed utterance does not leave him sitting
+            # there with his mouth hanging open. Fire and forget, though:
+            # every servo command costs about two seconds waiting out the
+            # serial read timeout, and the jaw shutting a moment after the
+            # sound stops is not noticeable. The lock in Arduino keeps this
+            # safe alongside other callers.
+            if move_mouth:
+                closer = threading.Thread(target=close_mouth)
+                closer.daemon = True
+                closer.start()
+
     return json.dumps({'error_message': 'success', 'text': text })
     
 @cross_origin(app)

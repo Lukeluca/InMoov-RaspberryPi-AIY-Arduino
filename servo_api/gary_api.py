@@ -58,11 +58,31 @@ class Arduino:
     # Arduino is constructed, as the Sight class does.
     _serial_lock = threading.Lock()
 
+    # send_commands has no terminator to read up to, so it reads until the line
+    # comes back empty - that is, until the serial read times out. This value
+    # is therefore the fixed cost of every command.
+    #
+    # Measured on the robot: the Arduino replies in about 14ms. Timing an
+    # invalid servo shows it, because that is rejected synchronously and the
+    # read loop returns on the error rather than waiting for silence. The
+    # firmware contains no delay() calls and does not wait for the servo to
+    # travel before replying, so there is nothing slower to allow for. A
+    # quarter of a second leaves roughly 18x headroom.
+    COMMAND_TIMEOUT = 0.25
+
+    # Opening the port resets the Arduino, which then takes a second or two to
+    # boot and print its banner. Draining that needs much longer than a command
+    # reply, or the banner leaks into the first real command's response.
+    BOOT_TIMEOUT = 2.0
+
     def __init__(self, ser):
         self.baud_rate = 115200
-        self.ser = serial.Serial(ser, self.baud_rate, bytesize=8, timeout=2)
+        self.ser = serial.Serial(ser, self.baud_rate, bytesize=8,
+                                 timeout=self.BOOT_TIMEOUT)
 
         self.ser.readlines()
+        # Banner drained; from here on a command should not cost two seconds.
+        self.ser.timeout = self.COMMAND_TIMEOUT
 
     def send_commands(self, formatted_commands):
         with Arduino._serial_lock:

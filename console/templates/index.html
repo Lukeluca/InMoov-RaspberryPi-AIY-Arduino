@@ -286,10 +286,11 @@
       return r.json().then(function (b) { return { ok: r.ok, body: b }; });
     }).then(function (res) {
       if (res.ok) {
-        // Refresh straight away rather than waiting for the next poll: the
-        // command only returns once the Arduino has acknowledged it, so the
-        // head has already moved.
-        loadFrame();
+        // Wait for the servo, not the acknowledgement. The Arduino replies as
+        // soon as it has parsed the command - it does not wait for the head to
+        // finish travelling - so refreshing immediately catches the move
+        // halfway through.
+        setTimeout(loadFrame, 600);
       } else {
         viewstate.textContent = res.body.error_message || 'move failed';
       }

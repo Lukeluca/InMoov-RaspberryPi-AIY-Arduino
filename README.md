@@ -75,7 +75,8 @@ as `GOOGLE_API_KEY`. Then install dependencies:
 
 ```bash
 pip3 install -r servo_api/requirements.txt -r brain/requirements.txt \
-            -r ears/requirements.txt -r vision/requirements.txt
+            -r ears/requirements.txt -r vision/requirements.txt \
+            -r console/requirements.txt
 ```
 
 The AIY packages (`aiy.board`, `aiy.voice`) come from the Voice Kit system image, not

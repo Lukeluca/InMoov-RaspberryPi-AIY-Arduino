@@ -32,6 +32,14 @@ EARS_URL = os.environ.get("GARY_EARS_URL", "http://localhost:5003")
 SPEAK_TIMEOUT = 60
 FRAME_TIMEOUT = 15
 STATUS_TIMEOUT = 3
+# A servo command waits on the Arduino replying, which takes a second or two.
+MOVE_TIMEOUT = 20
+
+# Absolute position both head servos treat as straight ahead.
+HEAD_CENTER = 50
+# Refuse an implausible nudge. The Arduino clamps to its own servo limits, so
+# this is only here to catch a mistake in the page.
+HEAD_STEP_LIMIT = 50
 
 app = Flask(__name__)
 
@@ -96,6 +104,50 @@ def say():
         return _json({"error_message": "text to speech failed (%d)"
                       % response.status_code}, 502)
     return _json({"error_message": "success", "text": text})
+
+
+@app.route("/api/head", methods=["POST"])
+def head():
+    """Move the head, or recentre it.
+
+        {"pan": 8}      turn, relative, as HH+8
+        {"tilt": -8}    tilt, relative, as HV-8
+        {"center": true}  absolute HH:50 HV:50
+
+    Recentring is absolute on purpose. There is no position feedback from the
+    Arduino, so relative nudges accumulate error with nothing to correct it;
+    an absolute command is the only way back to a known pose.
+    """
+    payload = request.get_json(silent=True) or {}
+    commands = []
+
+    if payload.get("center"):
+        commands.append("HH:%d HV:%d" % (HEAD_CENTER, HEAD_CENTER))
+    else:
+        for axis, key in (("HH", "pan"), ("HV", "tilt")):
+            value = payload.get(key)
+            if value is None:
+                continue
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                return _json({"error_message": "%s must be a whole number" % key}, 400)
+            if abs(value) > HEAD_STEP_LIMIT:
+                return _json({"error_message": "%s beyond +/-%d" % (key, HEAD_STEP_LIMIT)}, 400)
+            if value:
+                commands.append("%s%+d" % (axis, value))
+
+    if not commands:
+        return _json({"error_message": "nothing to move"}, 400)
+
+    try:
+        response = requests.post(SERVO_URL + "/api/commands",
+                                 json={"commands": commands}, timeout=MOVE_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        return _json({"error_message": "servo api unreachable: %s" % e}, 503)
+    if response.status_code != 200:
+        return _json({"error_message": "move failed (%d)" % response.status_code}, 502)
+    return _json({"error_message": "success", "commands": commands})
 
 
 @app.route("/api/status", methods=["GET"])

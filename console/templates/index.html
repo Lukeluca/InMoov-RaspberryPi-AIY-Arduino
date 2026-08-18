@@ -34,6 +34,47 @@
     padding: .6rem .9rem; border-top: 1px solid var(--line);
     font-size: .85rem; color: var(--dim); flex-wrap: wrap;
   }
+
+  /* Head controls, overlaid on the image and revealed on hover. */
+  .stage { position: relative; line-height: 0; }
+  .pad {
+    position: absolute; margin: 0; padding: 0; border: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(8, 8, 10, .3); color: #fff; cursor: pointer;
+    opacity: 0; transition: opacity .18s ease, background .15s ease;
+  }
+  /* The icons carry a drop shadow so they stay legible over both the blown-out
+     window and the dark wall - the camera sees both in one frame. */
+  .pad svg { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .95)); }
+  .stage:hover .pad { opacity: .8; }
+  .stage .pad:hover { opacity: 1; background: rgba(217, 79, 69, .8); }
+  /* One move at a time: each command waits on the Arduino replying, so
+     letting clicks queue would just build a backlog of head movements. */
+  .stage.busy .pad { opacity: .2; pointer-events: none; }
+  .stage.busy { cursor: progress; }
+
+  /* A gradient fading inwards, so the pads read as edge affordances rather
+     than rectangles sitting on top of the picture. */
+  .pad-up {
+    top: 0; left: 26%; right: 26%; height: 9%; align-items: center;
+    background: linear-gradient(to bottom, rgba(8,8,10,.55), rgba(8,8,10,0));
+  }
+  .pad-down {
+    bottom: 0; left: 26%; right: 26%; height: 9%; align-items: center;
+    background: linear-gradient(to top, rgba(8,8,10,.55), rgba(8,8,10,0));
+  }
+  .pad-left {
+    left: 0; top: 18%; bottom: 18%; width: 6.5%; justify-content: center;
+    background: linear-gradient(to right, rgba(8,8,10,.55), rgba(8,8,10,0));
+  }
+  .pad-right {
+    right: 0; top: 18%; bottom: 18%; width: 6.5%; justify-content: center;
+    background: linear-gradient(to left, rgba(8,8,10,.55), rgba(8,8,10,0));
+  }
+  .pad-center {
+    left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 52px; height: 52px; border-radius: 50%;
+  }
   label.toggle { display: flex; align-items: center; gap: .4rem; cursor: pointer; }
 
   h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
@@ -77,7 +118,38 @@
   </header>
 
   <div class="panel viewer">
-    <img id="frame" alt="Gary's camera">
+    <div class="stage" id="stage">
+      <img id="frame" alt="Gary's camera">
+
+      <button class="pad pad-up" data-dir="up" title="Look up">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+             stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>
+      </button>
+      <button class="pad pad-down" data-dir="down" title="Look down">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+             stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <button class="pad pad-left" data-dir="left" title="Turn left">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+             stroke-linejoin="round"><polyline points="15 6 9 12 15 18"/></svg>
+      </button>
+      <button class="pad pad-right" data-dir="right" title="Turn right">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+             stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+      </button>
+      <button class="pad pad-center" data-dir="center" title="Recentre the head">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="6"/>
+          <line x1="12" y1="1" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="1" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="23" y2="12"/>
+        </svg>
+      </button>
+    </div>
     <div class="viewbar">
       <label class="toggle">
         <input type="checkbox" id="live" checked> Poll every 2s
@@ -192,6 +264,56 @@
 
   wire('askBtn', 'askText', 'askReply', '/api/ask', 'Thinking…');
   wire('sayBtn', 'sayText', 'sayReply', '/api/say', 'Speaking…');
+
+  // How far one nudge moves, as a percentage of servo travel.
+  var STEP = 5;
+  // Which way the servos go, measured on the robot by phase-correlating frames
+  // before and after a step: HH-5 moved the scene -75px, so the head turned
+  // right; HV-5 moved it -27px vertically, so the head tilted down. Flip a sign
+  // here and nowhere else if a differently built head disagrees.
+  var PAN_SIGN = -1;
+  var TILT_SIGN = -1;
+
+  var stage = document.getElementById('stage');
+
+  function move(body) {
+    stage.classList.add('busy');
+    return fetch('/api/head', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+    }).then(function (res) {
+      if (res.ok) {
+        // Refresh straight away rather than waiting for the next poll: the
+        // command only returns once the Arduino has acknowledged it, so the
+        // head has already moved.
+        loadFrame();
+      } else {
+        viewstate.textContent = res.body.error_message || 'move failed';
+      }
+    }).catch(function (e) {
+      viewstate.textContent = 'move failed: ' + e;
+    }).then(function () {
+      stage.classList.remove('busy');
+    });
+  }
+
+  var MOVES = {
+    up:     function () { return { tilt: -TILT_SIGN * STEP }; },
+    down:   function () { return { tilt: TILT_SIGN * STEP }; },
+    left:   function () { return { pan: -PAN_SIGN * STEP }; },
+    right:  function () { return { pan: PAN_SIGN * STEP }; },
+    center: function () { return { center: true }; }
+  };
+
+  Array.prototype.forEach.call(document.querySelectorAll('.pad'), function (pad) {
+    pad.addEventListener('click', function () {
+      var build = MOVES[pad.getAttribute('data-dir')];
+      if (build) { move(build()); }
+    });
+  });
 
   var NAMES = { servo: 'servos', brain: 'brain', vision: 'vision', ears: 'ears' };
   function refreshStatus() {

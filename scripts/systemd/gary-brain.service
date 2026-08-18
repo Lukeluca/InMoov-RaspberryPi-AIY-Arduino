@@ -1,0 +1,31 @@
+[Unit]
+# Installed as a USER unit (systemctl --user), not a system unit. The AIY
+# voiceHAT is held exclusively by PulseAudio, which runs inside the pi user's
+# systemd session. A system-scope service cannot reach it: aplay fails with
+# "Device or resource busy" on the hardware device and cannot find the Pulse
+# socket on "default", so Gary moves his mouth in silence. Running in the user
+# session puts these services alongside PulseAudio, where audio just works.
+# Lingering (loginctl enable-linger) makes that session start at power-on
+# without anyone logging in.
+Description=Gary brain (Gemini conversation)
+Documentation=https://github.com/Lukeluca/InMoov-RaspberryPi-AIY-Arduino
+After=gary-servo.service
+Wants=gary-servo.service
+PartOf=gary.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/gary/brain
+# FLASK_APP and GOOGLE_API_KEY come from brain/.env, which flask loads from
+# the working directory. FLASK_ENV is forced to production here: .env sets
+# development, which would start the reloader and put a second process under
+# systemd's main PID. python-dotenv does not override variables already set,
+# so this wins.
+Environment=PYTHONUNBUFFERED=1
+Environment=FLASK_ENV=production
+ExecStart=/usr/bin/flask run --port 5001 --no-reload
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=gary.target

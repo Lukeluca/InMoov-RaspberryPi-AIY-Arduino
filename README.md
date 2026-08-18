@@ -91,6 +91,29 @@ To stop everything:
 pkill -f "[s]erver.py|[f]lask run|[g]ary_local_speech"
 ```
 
+### Starting automatically on power-on
+
+```bash
+./scripts/install-systemd.sh
+systemctl --user start gary.target
+```
+
+That installs three units plus a `gary.target` that groups them, and enables
+lingering so they come up at power-on without anyone logging in.
+
+```bash
+systemctl --user status gary-servo     # one service
+systemctl --user stop gary.target      # all three
+sudo journalctl --user-unit gary-brain -f
+```
+
+These are deliberately **user** units rather than system units. The AIY
+voiceHAT is held exclusively by PulseAudio, which runs inside the desktop
+user's systemd session, so a system-scope service cannot reach the sound card:
+`aplay` fails with "Device or resource busy" and text-to-speech returns a 500
+while every other part of the pipeline looks healthy. Gary moves his mouth and
+makes no sound. Running in the user session avoids that entirely.
+
 ## Configuration
 
 The model is set in `brain/app.py`. It currently uses `gemini-flash-lite-latest` —
@@ -115,8 +138,6 @@ These are real and worth understanding before you invest time:
   portable means abstracting a trigger source and a TTS backend.
 - **The mouth does not articulate.** It opens, holds through the whole utterance,
   then closes — there is no lip-sync.
-- **Nothing starts on boot.** `start_all.sh` must be run manually, and its services
-  die with the terminal that launched them unless detached.
 - **`archive/`** holds superseded code kept for reference. It is not wired up.
 
 ## Layout

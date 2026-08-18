@@ -1,0 +1,23 @@
+[Unit]
+# Installed as a USER unit (systemctl --user), not a system unit. The AIY
+# voiceHAT is held exclusively by PulseAudio, which runs inside the pi user's
+# systemd session. A system-scope service cannot reach it: aplay fails with
+# "Device or resource busy" on the hardware device and cannot find the Pulse
+# socket on "default", so Gary moves his mouth in silence. Running in the user
+# session puts these services alongside PulseAudio, where audio just works.
+# Lingering (loginctl enable-linger) makes that session start at power-on
+# without anyone logging in.
+Description=Gary servo API (Arduino serial link and text-to-speech)
+Documentation=https://github.com/Lukeluca/InMoov-RaspberryPi-AIY-Arduino
+PartOf=gary.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/gary/servo_api
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/pi/gary/servo_api/server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=gary.target

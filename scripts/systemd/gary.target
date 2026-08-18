@@ -1,0 +1,9 @@
+[Unit]
+Description=Gary the InMoov robot (all services)
+Documentation=https://github.com/Lukeluca/InMoov-RaspberryPi-AIY-Arduino
+# Each service declares PartOf=gary.target, so stopping this target stops all
+# three, and starting it starts all three in dependency order.
+Wants=gary-servo.service gary-brain.service gary-speech.service
+
+[Install]
+WantedBy=default.target

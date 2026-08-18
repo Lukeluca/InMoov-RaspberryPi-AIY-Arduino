@@ -1,0 +1,19 @@
+[Unit]
+# Installed as a USER unit for consistency with the rest - see the note in
+# gary-servo.service about PulseAudio and the AIY voiceHAT.
+Description=Gary remote console (web UI on :5004)
+Documentation=https://github.com/Lukeluca/InMoov-RaspberryPi-AIY-Arduino
+After=gary-servo.service gary-brain.service gary-vision.service
+Wants=gary-servo.service gary-brain.service gary-vision.service
+PartOf=gary.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/gary/console
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/pi/gary/console/server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=gary.target

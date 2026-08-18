@@ -26,7 +26,7 @@ flowchart LR
     S --> SPK([Speaker])
 ```
 
-Four processes, started together by `scripts/start_all.sh`:
+Five processes, started together by `scripts/start_all.sh`:
 
 | Service | Port | Responsibility |
 |---|---|---|
@@ -34,6 +34,7 @@ Four processes, started together by `scripts/start_all.sh`:
 | `brain/app.py` | 5001 | Coordinates. Prompts Gemini, decides when to look, drives speech |
 | `vision/server.py` | 5002 | Owns the camera; serves frames to anything that needs to see |
 | `ears/listener.py` | 5003 | Owns the microphone; triggers, recording, offline transcription |
+| `console/server.py` | 5004 | Remote control page; proxies to the others |
 
 Each hardware resource has exactly one owning service — serial port, camera,
 microphone and button — because each can only be held by one process. Anything
@@ -107,7 +108,7 @@ pkill -f "[s]erver.py|[f]lask run|[l]istener.py"
 systemctl --user start gary.target
 ```
 
-That installs four units plus a `gary.target` that groups them, and enables
+That installs five units plus a `gary.target` that groups them, and enables
 lingering so they come up at power-on without anyone logging in.
 
 ```bash
@@ -171,6 +172,29 @@ The frames are given to the model as *optional* context. The system prompt tells
 Gary to use them only when they help answer what was actually said, and never to
 remark on what he can see otherwise — so "how are you?" gets a normal answer
 while "what is on the table?" gets a real one.
+
+## Remote console
+
+`http://<pi>:5004/` — a single page showing what Gary sees, with two boxes:
+
+- **Ask Gary** goes to Gemini; he answers aloud and moves his mouth
+- **Gary says** speaks text verbatim, with no model involved
+
+The view polls `/api/frame.jpg` every two seconds rather than streaming, so the
+vision service still releases the camera when nobody is watching. Polling stops
+when the browser tab is hidden — otherwise a forgotten tab would hold the
+camera open and leave the LED lit with nobody actually looking. A live stream
+would be a later addition, taking a camera lease for the life of the
+connection.
+
+The console proxies rather than letting the browser call each service. That
+keeps the brain bound to localhost instead of exposed to the network, avoids
+CORS entirely, and keeps the user interface out of the services that own
+hardware. The page has no external assets, so it renders on a robot with no
+internet.
+
+**There is no authentication.** Anyone who can reach port 5004 can move Gary
+and make him speak. Consider where it is bound before exposing it.
 
 ### Triggers
 

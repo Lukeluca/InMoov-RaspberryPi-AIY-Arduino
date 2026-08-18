@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gary</title>
+<style>
+  :root {
+    --bg: #16161a; --panel: #1e1e24; --line: #2e2e38;
+    --ink: #e6e6ea; --dim: #9a9aa8; --accent: #d94f45; --ok: #4caf7d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--ink);
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1rem; }
+  h1 { font-size: 1.35rem; margin: 0; letter-spacing: .02em; }
+  .sub { color: var(--dim); font-size: .85rem; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+  }
+  .viewer { padding: 0; overflow: hidden; }
+  #frame {
+    display: block; width: 100%; background: #000;
+    aspect-ratio: 16 / 9; object-fit: cover;
+  }
+  .viewbar {
+    display: flex; align-items: center; gap: 1rem;
+    padding: .6rem .9rem; border-top: 1px solid var(--line);
+    font-size: .85rem; color: var(--dim); flex-wrap: wrap;
+  }
+  label.toggle { display: flex; align-items: center; gap: .4rem; cursor: pointer; }
+
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--dim); margin: 0 0 .6rem; font-weight: 600; }
+  .row { display: flex; gap: .5rem; }
+  input[type=text] {
+    flex: 1; min-width: 0; padding: .6rem .7rem; border-radius: 6px;
+    border: 1px solid var(--line); background: #131317; color: var(--ink);
+    font-size: .95rem;
+  }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: .6rem 1rem; border-radius: 6px; border: 1px solid var(--line);
+    background: #2a2a33; color: var(--ink); cursor: pointer; font-size: .9rem;
+  }
+  button:hover:not(:disabled) { background: #34343f; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .reply { margin-top: .7rem; padding: .7rem .8rem; border-radius: 6px;
+           background: #131317; border-left: 3px solid var(--accent);
+           white-space: pre-wrap; }
+  .reply.hidden { display: none; }
+  .err { border-left-color: #c9584f; color: #ffb3ad; }
+  .note { color: var(--dim); font-size: .8rem; margin-top: .5rem; }
+
+  .status { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .8rem;
+            color: var(--dim); }
+  .dot { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%;
+         background: #555; margin-right: .35rem; vertical-align: baseline; }
+  .dot.up { background: var(--ok); }
+  .dot.down { background: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Gary</h1>
+    <span class="sub">remote console</span>
+  </header>
+
+  <div class="panel viewer">
+    <img id="frame" alt="Gary's camera">
+    <div class="viewbar">
+      <label class="toggle">
+        <input type="checkbox" id="live" checked> Poll every 2s
+      </label>
+      <button id="refresh">Refresh now</button>
+      <span id="viewstate">idle</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Ask Gary</h2>
+    <div class="row">
+      <input type="text" id="askText" placeholder="Something to ask him"
+             autocomplete="off">
+      <button class="primary" id="askBtn">Ask</button>
+    </div>
+    <div class="reply hidden" id="askReply"></div>
+    <p class="note">Goes to Gemini. He answers out loud and moves his mouth.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Gary says</h2>
+    <div class="row">
+      <input type="text" id="sayText" placeholder="Words to put in his mouth"
+             autocomplete="off">
+      <button id="sayBtn">Say it</button>
+    </div>
+    <div class="reply hidden" id="sayReply"></div>
+    <p class="note">Spoken verbatim. No model involved.</p>
+  </div>
+
+  <div class="panel">
+    <div class="status" id="status">checking services…</div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  var frame = document.getElementById('frame');
+  var live = document.getElementById('live');
+  var viewstate = document.getElementById('viewstate');
+  var timer = null;
+  var POLL_MS = 2000;
+
+  function loadFrame() {
+    // Cache-busted so the browser actually re-fetches.
+    var img = new Image();
+    img.onload = function () {
+      frame.src = img.src;
+      viewstate.textContent = 'updated ' + new Date().toLocaleTimeString();
+    };
+    img.onerror = function () { viewstate.textContent = 'camera unavailable'; };
+    img.src = '/api/frame.jpg?t=' + Date.now();
+  }
+
+  function polling(on) {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (on) { loadFrame(); timer = setInterval(loadFrame, POLL_MS); }
+    else { viewstate.textContent = 'paused'; }
+  }
+
+  live.addEventListener('change', function () { polling(live.checked); });
+  document.getElementById('refresh').addEventListener('click', loadFrame);
+
+  // Stop polling when the tab is hidden. A forgotten tab would otherwise hold
+  // the camera open indefinitely, and the camera LED would stay lit with
+  // nobody actually watching.
+  document.addEventListener('visibilitychange', function () {
+    polling(document.visibilityState === 'visible' && live.checked);
+  });
+
+  function wire(btnId, inputId, replyId, url, busyLabel) {
+    var btn = document.getElementById(btnId);
+    var input = document.getElementById(inputId);
+    var reply = document.getElementById(replyId);
+
+    function send() {
+      var text = input.value.trim();
+      if (!text) { return; }
+      btn.disabled = true;
+      var was = btn.textContent;
+      btn.textContent = busyLabel;
+      reply.className = 'reply hidden';
+
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text })
+      }).then(function (r) {
+        return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+      }).then(function (res) {
+        reply.className = 'reply' + (res.ok ? '' : ' err');
+        reply.textContent = res.ok
+          ? (res.body.text || 'done')
+          : (res.body.error_message || 'failed');
+        if (res.ok) { input.value = ''; }
+      }).catch(function (e) {
+        reply.className = 'reply err';
+        reply.textContent = 'console unreachable: ' + e;
+      }).then(function () {
+        btn.disabled = false;
+        btn.textContent = was;
+      });
+    }
+
+    btn.addEventListener('click', send);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { send(); }
+    });
+  }
+
+  wire('askBtn', 'askText', 'askReply', '/api/ask', 'Thinking…');
+  wire('sayBtn', 'sayText', 'sayReply', '/api/say', 'Speaking…');
+
+  var NAMES = { servo: 'servos', brain: 'brain', vision: 'vision', ears: 'ears' };
+  function refreshStatus() {
+    fetch('/api/status').then(function (r) { return r.json(); }).then(function (d) {
+      var bits = [];
+      Object.keys(NAMES).forEach(function (key) {
+        var up = d.services && d.services[key];
+        bits.push('<span><i class="dot ' + (up ? 'up' : 'down') + '"></i>'
+                  + NAMES[key] + '</span>');
+      });
+      if (d.camera) {
+        bits.push('<span><i class="dot ' + (d.camera.open ? 'up' : '') + '"></i>camera '
+                  + (d.camera.open ? 'open' : 'released') + '</span>');
+      }
+      document.getElementById('status').innerHTML = bits.join('');
+    }).catch(function () {
+      document.getElementById('status').textContent = 'console unreachable';
+    });
+  }
+
+  polling(true);
+  refreshStatus();
+  setInterval(refreshStatus, 10000);
+})();
+</script>
+</body>
+</html>

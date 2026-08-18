@@ -15,5 +15,6 @@ export PYTHONUNBUFFERED=1
 python3 "$ROOT/servo_api/server.py" &
 python3 "$ROOT/vision/server.py" &
 python3 "$ROOT/ears/listener.py" &
+python3 "$ROOT/console/server.py" &
 cd "$ROOT/brain" || exit 1
 flask run --port 5001 &

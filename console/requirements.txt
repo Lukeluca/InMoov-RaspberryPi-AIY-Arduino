@@ -1,0 +1,7 @@
+Flask
+requests
+
+# No CDN or external assets: the page is self-contained so it renders on a
+# robot with no internet access. The old control page in servo_api pulled
+# jQuery over plain HTTP from googleapis, which meant it needed the internet
+# just to draw a text box.

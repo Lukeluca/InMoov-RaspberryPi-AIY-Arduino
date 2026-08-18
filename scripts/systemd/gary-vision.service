@@ -1,0 +1,22 @@
+[Unit]
+# Installed as a USER unit for consistency with the other services - see the
+# note in gary-servo.service about PulseAudio and the AIY voiceHAT. This
+# service does not use audio, but keeping all of Gary under one manager means
+# gary.target starts and stops everything together.
+Description=Gary vision service (camera access)
+Documentation=https://github.com/Lukeluca/InMoov-RaspberryPi-AIY-Arduino
+PartOf=gary.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/gary/vision
+Environment=PYTHONUNBUFFERED=1
+# Release the camera after 30s idle, so the LED goes dark, the device is free
+# for raspistill, and no stale buffer is waiting for the next request.
+Environment=GARY_CAMERA_IDLE_TIMEOUT=30
+ExecStart=/usr/bin/python3 /home/pi/gary/vision/server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=gary.target

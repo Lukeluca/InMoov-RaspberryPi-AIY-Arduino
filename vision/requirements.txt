@@ -1,0 +1,12 @@
+Flask
+Flask-Cors
+
+# OpenCV is NOT listed here on purpose. On Raspberry Pi OS install it from apt:
+#
+#     sudo apt install python3-opencv
+#
+# The system package (3.2 on buster) is enough for this service. Building or
+# pip-installing a newer OpenCV on a 32-bit Pi is slow and unnecessary - the
+# only thing this project ever needed from OpenCV 4 was cv2.data, which just
+# returns a path to the bundled Haar cascades. Face tracking will vendor the
+# cascade XML instead.

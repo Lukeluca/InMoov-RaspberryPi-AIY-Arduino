@@ -30,6 +30,7 @@ Three processes, started together by `scripts/start_all.sh`:
 | `servo_api/server.py` | 5000 | Owns the Arduino serial link; moves servos; text-to-speech |
 | `brain/app.py` | 5001 | Sends prompts to Gemini; drives mouth and speech |
 | `brain/gary_local_speech_recognition.py` | — | Push-to-talk recording and offline transcription |
+| `vision/server.py` | 5002 | Owns the camera; serves frames to anything that needs to see |
 
 A full exchange takes roughly 8 seconds: about 3 for the model, about 5 for speech.
 
@@ -114,6 +115,40 @@ user's systemd session, so a system-scope service cannot reach the sound card:
 while every other part of the pipeline looks healthy. Gary moves his mouth and
 makes no sound. Running in the user session avoids that entirely.
 
+## Vision
+
+`vision/` owns the camera. Only one process can hold `/dev/video0`, so nothing
+else opens it — everything that needs to see asks this service.
+
+```
+GET  /health           service and camera state
+GET  /frame.jpg        one frame, as an image
+GET  /frames?count=3   several frames, base64, for a multimodal prompt
+POST /camera/release   drop the camera now, e.g. to free it for raspistill
+```
+
+The camera is opened on first use and released again after 30 seconds idle
+(`GARY_CAMERA_IDLE_TIMEOUT`). Holding it open permanently would mean V4L2
+queues buffers nobody reads, so a request after a long gap returns a frame
+from seconds earlier; it also leaves a handle exposed to the legacy driver
+wedging, and keeps the module's LED lit, which in a shared room reads as a
+camera that is always recording. Measured on a Pi 4 with the v1 camera:
+
+| | |
+|---|---|
+| Cold capture (opens the camera, 1.5s warmup) | ~2.0s |
+| Warm capture (already open) | ~0.05s |
+| Draining stale buffers after an idle gap | negligible |
+
+That 40x gap is why a burst of frames is served without closing in between.
+Components that genuinely need the camera held open — head tracking, when it
+arrives — take a lease, which suppresses the idle release while held.
+
+Several images can go into a single Gemini request at roughly 1,100 tokens
+each, and labelling them in the prompt works, so `/frames` is useful for a
+wider effective view than the camera's field of view allows, or for asking
+what changed between two moments.
+
 ## Configuration
 
 The model is set in `brain/app.py`. It currently uses `gemini-flash-lite-latest` —
@@ -129,10 +164,14 @@ character.
 
 These are real and worth understanding before you invest time:
 
-- **Vision is disabled.** The `Sight` class in `servo_api/gary_api.py` is commented
-  out. It contains working Haar-cascade face detection and head-tracking, but needs
-  an OpenCV new enough to provide `cv2.data` (4.x). The system OpenCV on buster is
-  3.2, which is too old.
+- **Head tracking is not built yet.** The camera works and `vision/` serves frames,
+  but nothing follows a face. The old `Sight` class in `servo_api/gary_api.py` is
+  still commented out; it contains working Haar-cascade detection and head-tracking
+  worth salvaging. It does not need a newer OpenCV, despite the `cv2.data`
+  reference that broke it — that attribute only returns the path to the bundled
+  cascade files, and the system OpenCV 3.2 loads a cascade fine from an explicit
+  path. It does need rewriting to send servo commands over HTTP rather than opening
+  a second connection to the serial port.
 - **Requires the AIY Voice HAT.** The button, LED and text-to-speech all come from
   `aiy.*`. Without that discontinued board the code fails at import. Making this
   portable means abstracting a trigger source and a TTS backend.

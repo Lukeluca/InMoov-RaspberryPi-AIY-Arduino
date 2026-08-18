@@ -1,9 +1,11 @@
 import os
+import base64
 import logging
 import json
 import jsonify
 import random
 import requests
+import time
 import urllib.request
 
 #import google.generativeai as genai
@@ -21,12 +23,79 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Create a 5 minute cache for the conversations
 cache = cachetools.TTLCache(maxsize=10, ttl=300)
 
+VISION_URL = os.environ.get("GARY_VISION_URL", "http://localhost:5002")
+FRAME_TIMEOUT = 8
+# A stashed frame older than this belongs to an abandoned exchange.
+FRAME_MAX_AGE = 60
+
+# The ears report that someone started and stopped speaking. They know nothing
+# about cameras - this service decides those moments are worth photographing,
+# which is why a robot with no camera runs the same ears unchanged.
+FRAME_SLOTS = [
+    ("started", "Camera view as the person started speaking:"),
+    ("ended", "Camera view as they finished speaking:"),
+]
+
+_frames_lock = threading.Lock()
+_frames = {}
+
+
+def grab_frame(slot):
+    """Fetch a frame from the vision service and stash it under `slot`.
+
+    Runs on a background thread so a speech event returns immediately. A
+    missing or unreachable vision service is an ordinary condition, not an
+    error: plenty of InMoovs have no camera.
+    """
+    try:
+        response = requests.get(VISION_URL + "/frame.jpg", timeout=FRAME_TIMEOUT)
+        if response.status_code != 200 or not response.content:
+            logging.info("no %s frame: vision returned %d", slot, response.status_code)
+            return
+    except requests.exceptions.RequestException as e:
+        logging.info("no %s frame: %s", slot, e)
+        return
+    with _frames_lock:
+        _frames[slot] = (time.monotonic(), response.content)
+
+
+def take_frames():
+    """Return [(label, jpeg)] for recent frames, emptying the stash."""
+    now = time.monotonic()
+    images = []
+    with _frames_lock:
+        for slot, label in FRAME_SLOTS:
+            stashed = _frames.get(slot)
+            if stashed and now - stashed[0] <= FRAME_MAX_AGE:
+                images.append((label, stashed[1]))
+        _frames.clear()
+    return images
+
+
+@app.route("/events/speech", methods=["POST"])
+@cross_origin(app)
+def speech_event():
+    """The ears reporting speech. Taking a photograph is our decision."""
+    payload = request.get_json(silent=True) or {}
+    event = payload.get("event")
+    slot = {"speech.started": "started", "speech.ended": "ended"}.get(event)
+    if slot is None:
+        return json.dumps({'error_message': 'ignored', 'event': event})
+
+    thread = threading.Thread(target=grab_frame, args=(slot,))
+    thread.daemon = True
+    thread.start()
+    return json.dumps({'error_message': 'success', 'event': event})
+
+
 @app.route("/", methods=["GET", "POST"])
 @cross_origin(app)
 def index():
     if request.method == "POST":
         gary_prompt = request.form["gary_prompt"]
-        result = google_generate_content(gary_prompt)
+        images = take_frames()
+        logging.info("prompt received, %d camera frame(s) available", len(images))
+        result = google_generate_content(gary_prompt, images)
 
         open_mouth()
         speak(result)
@@ -55,7 +124,23 @@ def google_generate_chat_content():
             })
     return json_data
 
-def google_generate_content(prompt):
+def user_parts(prompt, images=None):
+    """Build the user turn: the spoken text, then any camera frames.
+
+    Each frame is preceded by a short label so the model can tell them apart
+    and place them in time.
+    """
+    parts = [{"text": prompt}]
+    for label, data in (images or []):
+        parts.append({"text": label})
+        parts.append({"inline_data": {
+            "mime_type": "image/jpeg",
+            "data": base64.b64encode(data).decode("ascii"),
+        }})
+    return parts
+
+
+def google_generate_content(prompt, images=None):
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent"
     url += "?key=" + os.getenv("GOOGLE_API_KEY")
     
@@ -73,10 +158,16 @@ At the time, the CEO & President of Bottle Rocket Studios was Calvin Carter. \
 Matt Smith became President of Bottle Rocket in November 2025. \
 Luke worked on Gary every year of Rocket Science, the annual hackathon. \
 He started as only an arm, but has grown to have a head, a waist, and everything in between.\
+You may also be given one or two photographs from your own camera, showing what you could \
+see while the person was speaking. Treat them as optional background context, nothing more. \
+Use them only when they genuinely help you answer what was actually said, such as when you \
+are asked about something in front of you. If they are not relevant, ignore them completely. \
+Never describe, mention or remark on what you can see unless you were asked about it or it \
+clearly matters to the answer. \
 Try to answer in 15 words or less."
               }
             },
-        "contents": [ json_chat, { "role":"user", "parts":[{"text": prompt}] }] }
+        "contents": [ json_chat, { "role":"user", "parts": user_parts(prompt, images) }] }
     
     #print(json_body)
 

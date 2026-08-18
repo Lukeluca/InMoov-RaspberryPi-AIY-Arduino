@@ -1,0 +1,11 @@
+requests
+vosk
+
+# Flask is only needed for the "http" trigger, which lets the brain ask Gary to
+# listen without owning the button. Leave it out if GARY_TRIGGER never includes
+# http - the trigger is skipped with a warning rather than failing to start.
+Flask
+
+# The "aiy" trigger uses aiy.board from the AIY Voice Kit system image, which
+# is not a pip package. On a robot without that board use GARY_TRIGGER=keyboard
+# or GARY_TRIGGER=http instead.

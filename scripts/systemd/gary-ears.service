@@ -7,7 +7,7 @@
 # session puts these services alongside PulseAudio, where audio just works.
 # Lingering (loginctl enable-linger) makes that session start at power-on
 # without anyone logging in.
-Description=Gary push-to-talk speech recognition (AIY button and Vosk)
+Description=Gary ears (microphone, trigger and offline transcription)
 Documentation=https://github.com/Lukeluca/InMoov-RaspberryPi-AIY-Arduino
 After=gary-brain.service
 Wants=gary-brain.service
@@ -15,9 +15,12 @@ PartOf=gary.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/pi/gary/brain
+WorkingDirectory=/home/pi/gary/ears
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 /home/pi/gary/brain/gary_local_speech_recognition.py
+# GARY_TRIGGER selects what can start a recording. Add ,http to let the
+# brain ask Gary to listen without going through the button.
+Environment=GARY_TRIGGER=aiy,http
+ExecStart=/usr/bin/python3 /home/pi/gary/ears/listener.py
 # Loading the Vosk model takes roughly 20 seconds, so give it room before a
 # restart is considered, and do not thrash if the microphone is missing.
 Restart=on-failure

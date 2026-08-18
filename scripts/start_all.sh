@@ -13,7 +13,7 @@ export PYTHONUNBUFFERED=1
 
 #source ~/piv4venv/bin/activate
 python3 "$ROOT/servo_api/server.py" &
-#python3 "$ROOT/brain/garyspeech.py" &
-python3 "$ROOT/brain/gary_local_speech_recognition.py" &
+python3 "$ROOT/vision/server.py" &
+python3 "$ROOT/ears/listener.py" &
 cd "$ROOT/brain" || exit 1
 flask run --port 5001 &

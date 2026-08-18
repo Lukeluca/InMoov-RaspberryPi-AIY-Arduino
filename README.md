@@ -13,24 +13,31 @@ hardware.
 
 ```mermaid
 flowchart LR
-    B([Button press]) --> R[speech recognition<br/>Vosk, offline]
-    R -->|POST gary_prompt| N[brain<br/>:5001]
+    B([Trigger]) --> R[ears :5003<br/>Vosk, offline]
+    R -->|speech.started / ended| N[brain<br/>:5001]
+    R -->|POST transcript| N
+    N -->|GET frame.jpg| V[vision :5002]
+    V -->|frames| N
     N -->|prompt| G([Gemini API])
     G -->|reply| N
     N -->|POST /api/commands| S[servo_api<br/>:5000]
     N -->|POST /api/voice/text2speech| S
     S -->|serial 115200| A([Arduino → servos])
-    S --> V([Speaker])
+    S --> SPK([Speaker])
 ```
 
-Three processes, started together by `scripts/start_all.sh`:
+Four processes, started together by `scripts/start_all.sh`:
 
 | Service | Port | Responsibility |
 |---|---|---|
 | `servo_api/server.py` | 5000 | Owns the Arduino serial link; moves servos; text-to-speech |
-| `brain/app.py` | 5001 | Sends prompts to Gemini; drives mouth and speech |
-| `brain/gary_local_speech_recognition.py` | — | Push-to-talk recording and offline transcription |
+| `brain/app.py` | 5001 | Coordinates. Prompts Gemini, decides when to look, drives speech |
 | `vision/server.py` | 5002 | Owns the camera; serves frames to anything that needs to see |
+| `ears/listener.py` | 5003 | Owns the microphone; triggers, recording, offline transcription |
+
+Each hardware resource has exactly one owning service — serial port, camera,
+microphone and button — because each can only be held by one process. Anything
+else that needs them asks over HTTP.
 
 A full exchange takes roughly 8 seconds: about 3 for the model, about 5 for speech.
 
@@ -66,7 +73,8 @@ Add your [Google AI Studio key](https://aistudio.google.com/apikey) to `brain/.e
 as `GOOGLE_API_KEY`. Then install dependencies:
 
 ```bash
-pip3 install -r servo_api/requirements.txt -r brain/requirements.txt
+pip3 install -r servo_api/requirements.txt -r brain/requirements.txt \
+            -r ears/requirements.txt -r vision/requirements.txt
 ```
 
 The AIY packages (`aiy.board`, `aiy.voice`) come from the Voice Kit system image, not
@@ -89,7 +97,7 @@ curl -X POST http://localhost:5001/ --data-urlencode "gary_prompt=say hello"
 To stop everything:
 
 ```bash
-pkill -f "[s]erver.py|[f]lask run|[g]ary_local_speech"
+pkill -f "[s]erver.py|[f]lask run|[l]istener.py"
 ```
 
 ### Starting automatically on power-on
@@ -99,12 +107,12 @@ pkill -f "[s]erver.py|[f]lask run|[g]ary_local_speech"
 systemctl --user start gary.target
 ```
 
-That installs three units plus a `gary.target` that groups them, and enables
+That installs four units plus a `gary.target` that groups them, and enables
 lingering so they come up at power-on without anyone logging in.
 
 ```bash
 systemctl --user status gary-servo     # one service
-systemctl --user stop gary.target      # all three
+systemctl --user stop gary.target      # all of them
 sudo journalctl --user-unit gary-brain -f
 ```
 
@@ -148,6 +156,36 @@ Several images can go into a single Gemini request at roughly 1,100 tokens
 each, and labelling them in the prompt works, so `/frames` is useful for a
 wider effective view than the camera's field of view allows, or for asking
 what changed between two moments.
+
+### What Gary sees when you talk to him
+
+The ears announce two facts — `speech.started` and `speech.ended` — and the
+brain decides those moments are worth photographing. It grabs a frame on each,
+holds them briefly, and attaches them to the next prompt.
+
+The ears know nothing about cameras. That is deliberate: a robot built without
+one runs the same ears unchanged, and the brain simply finds no vision service
+and carries on with audio alone.
+
+The frames are given to the model as *optional* context. The system prompt tells
+Gary to use them only when they help answer what was actually said, and never to
+remark on what he can see otherwise — so "how are you?" gets a normal answer
+while "what is on the table?" gets a real one.
+
+### Triggers
+
+Gary is never listening continuously; the ears record only when a trigger says
+to. `GARY_TRIGGER` selects which, comma separated:
+
+| | |
+|---|---|
+| `aiy` | The Voice HAT's button. Hold to talk. The default |
+| `http` | `POST :5003/listen/start` and `/listen/stop`, so the brain can ask Gary to listen |
+| `keyboard` | Enter to start, Enter to stop. For development, or a robot with no button |
+
+A trigger that cannot be constructed — no AIY board present, say — is skipped
+with a warning rather than stopping the service, so a partly equipped robot
+still works. This is the seam to extend for a wake word or a GPIO button.
 
 ## Configuration
 

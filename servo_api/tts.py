@@ -16,6 +16,7 @@ Configuration, all optional:
     GARY_PIPER_VOICE         path to a .onnx voice
     GARY_PIPER_LENGTH_SCALE  phoneme length; below 1.0 is faster speech
     GARY_ALSA_DEVICE         aplay device, default "default"
+    GARY_TTS_VOLUME          playback gain 0.0-1.0, default 0.7
 
 
 Why this synthesizes to a file rather than streaming
@@ -52,10 +53,13 @@ about half a second rather than two. That is a prompt change, not a code
 change, and it is worth more than the streaming machinery.
 """
 
+import audioop
+import contextlib
 import os
 import subprocess
 import tempfile
 import threading
+import wave
 
 ENGINE = os.environ.get("GARY_TTS_ENGINE", "auto")
 TTS_HOME = os.environ.get("GARY_TTS_HOME", os.path.expanduser("~/gary-tts"))
@@ -64,6 +68,8 @@ PIPER_VOICE = os.environ.get("GARY_PIPER_VOICE",
                              TTS_HOME + "/voices/en_GB-alan-low.onnx")
 LENGTH_SCALE = os.environ.get("GARY_PIPER_LENGTH_SCALE", "0.75")
 ALSA_DEVICE = os.environ.get("GARY_ALSA_DEVICE", "default")
+# Playback gain, 0.0 to 1.0. Applied to the samples, not the system mixer.
+VOLUME = float(os.environ.get("GARY_TTS_VOLUME", "0.7"))
 
 # tmpfs if it exists, so a wav per utterance does not chew at the SD card.
 _RUN_DIR = "/run/user/%d" % os.getuid()
@@ -143,50 +149,93 @@ class _ResidentPiper(object):
 _piper = _ResidentPiper()
 
 
-def _speak_piper(text):
+def _synthesize_piper_once(text):
+    """Spawn piper for a single utterance. The fallback path."""
+    handle = tempfile.NamedTemporaryFile(suffix=".wav", dir=TMP_DIR, delete=False)
+    handle.close()
+    subprocess.run(
+        [PIPER_BIN, "--model", PIPER_VOICE,
+         "--length_scale", LENGTH_SCALE, "--output_file", handle.name],
+        input=text.encode("utf-8"),
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    return handle.name
+
+
+def _synthesize_pico(text):
+    """The 2013 AIY voice, used when Piper is not installed.
+
+    The volume, pitch and speed markup matches what aiy.voice.tts.say applied,
+    so falling back sounds like Gary always used to.
+    """
+    handle = tempfile.NamedTemporaryFile(suffix=".wav", dir=TMP_DIR, delete=False)
+    handle.close()
+    markup = ("<volume level='50'><pitch level='69'><speed level='125'>"
+              "%s</speed></pitch></volume>" % text)
+    subprocess.check_call(
+        ["pico2wave", "--wave", handle.name, "--lang", "en-GB", markup],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return handle.name
+
+
+def synthesize(text):
+    """Render speech to a wav and return its path. Caller must discard() it.
+
+    Kept separate from play() so the servo API can open Gary's mouth between
+    the two. Synthesis takes about two seconds with Piper, and opening the jaw
+    before that leaves him sitting open-mouthed and silent while the model
+    works - which with Pico's 0.12s nobody ever noticed.
+    """
+    if ENGINE == "pico" or (ENGINE == "auto" and not piper_available()):
+        return _synthesize_pico(text)
     try:
-        path = _piper.synthesize(text)
+        return _piper.synthesize(text)
     except Exception as e:
         # A one-shot run is slower but self-contained, so a wedged resident
         # process degrades the voice rather than silencing Gary.
         print("resident piper failed (%s), falling back to one-shot" % e)
-        return _speak_piper_once(text)
+        return _synthesize_piper_once(text)
+
+
+def play(path):
+    """Play a wav, attenuated by GARY_TTS_VOLUME. Blocks until it finishes.
+
+    The gain is applied to the samples rather than to the mixer, so Gary's
+    loudness is his own setting and does not change system audio for anything
+    else on the Pi. Piper output is louder in practice than the old voice was:
+    Pico was played through aiy.voice.tts at volume level 50, which halved it,
+    and Piper has no equivalent.
+    """
+    with contextlib.closing(wave.open(path, "rb")) as source:
+        channels = source.getnchannels()
+        width = source.getsampwidth()
+        rate = source.getframerate()
+        frames = source.readframes(source.getnframes())
+
+    if VOLUME != 1.0:
+        frames = audioop.mul(frames, width, VOLUME)
+
+    # Piped rather than given a filename, so the attenuated audio never needs
+    # a second temporary file.
+    player = subprocess.Popen(
+        ["aplay", "-q", "-D", ALSA_DEVICE, "-f", "S16_LE",
+         "-r", str(rate), "-c", str(channels), "-"],
+        stdin=subprocess.PIPE)
+    player.communicate(frames)
+    if player.returncode != 0:
+        raise RuntimeError("aplay exited %d" % player.returncode)
+
+
+def discard(path):
     try:
-        subprocess.check_call(["aplay", "-q", "-D", ALSA_DEVICE, path])
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-
-
-def _speak_piper_once(text):
-    """Spawn piper for a single utterance. The fallback path."""
-    handle = tempfile.NamedTemporaryFile(suffix=".wav", dir=TMP_DIR, delete=False)
-    handle.close()
-    try:
-        subprocess.run(
-            [PIPER_BIN, "--model", PIPER_VOICE,
-             "--length_scale", LENGTH_SCALE, "--output_file", handle.name],
-            input=text.encode("utf-8"),
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        subprocess.check_call(["aplay", "-q", "-D", ALSA_DEVICE, handle.name])
-    finally:
-        try:
-            os.unlink(handle.name)
-        except OSError:
-            pass
-
-
-def _speak_pico(text):
-    # The AIY helper, which is what Gary used before Piper. Its own defaults
-    # lower the pitch a little, which suited the old voice.
-    import aiy.voice.tts
-    aiy.voice.tts.say(text, lang="en-GB", volume=50, pitch=69, speed=125)
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def speak(text):
-    """Say something out loud. Blocks until the audio has finished playing."""
-    if ENGINE == "pico" or (ENGINE == "auto" and not piper_available()):
-        return _speak_pico(text)
-    return _speak_piper(text)
+    """Synthesize and play. Blocks until the audio has finished."""
+    path = synthesize(text)
+    try:
+        play(path)
+    finally:
+        discard(path)

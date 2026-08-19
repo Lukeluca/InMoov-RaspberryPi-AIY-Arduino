@@ -5,6 +5,8 @@ from config import base_conf
 import json
 import threading
 
+import tts
+
 app = Flask(__name__)
 cors = CORS(app, resources={r"/api/*": {"Access-Control-Allow-Origin": "*"}})
 gary = GaryAPI()
@@ -62,18 +64,22 @@ def text_to_speech():
         # the jaw is HM.
         move_mouth = body.get('move_mouth', True)
 
-        if move_mouth:
-            # Synchronous: the jaw has to be open before the sound starts.
-            gary.send_commands({"commands": [MOUTH_OPEN]})
+        # Synthesis first, mouth second. Piper takes about two seconds to
+        # render a sentence, and opening the jaw before that left Gary sitting
+        # open-mouthed and silent while the model worked. With the old Pico
+        # voice synthesis took 0.12s, so the gap was invisible.
+        audio = tts.synthesize(text)
         try:
-            gary.speech.text2speech(text)
+            if move_mouth:
+                # Synchronous: the jaw has to be open before the sound starts.
+                gary.send_commands({"commands": [MOUTH_OPEN]})
+            tts.play(audio)
         finally:
+            tts.discard(audio)
             # In a finally so a failed utterance does not leave him sitting
-            # there with his mouth hanging open. Fire and forget, though:
-            # every servo command costs about two seconds waiting out the
-            # serial read timeout, and the jaw shutting a moment after the
-            # sound stops is not noticeable. The lock in Arduino keeps this
-            # safe alongside other callers.
+            # there with his mouth hanging open. Fire and forget, so the
+            # response is not held up by the serial round trip; the lock in
+            # Arduino keeps it safe alongside other callers.
             if move_mouth:
                 closer = threading.Thread(target=close_mouth)
                 closer.daemon = True

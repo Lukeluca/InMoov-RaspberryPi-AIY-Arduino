@@ -98,6 +98,15 @@ def speech_event():
 def index():
     if request.method == "POST":
         gary_prompt = request.form["gary_prompt"]
+        if request.form.get("include_image") in ("1", "true", "on", "yes"):
+            # The same slot the ears fill at the end of an utterance: a typed
+            # question arriving is the same moment as someone finishing
+            # speaking. Synchronous here, where that path is threaded, because
+            # the question has already arrived and the frame has to be in hand
+            # before the prompt goes out. Anything already stashed belongs to an
+            # exchange nobody finished, so it is dropped and exactly one is sent.
+            take_frames()
+            grab_frame("ended")
         images = take_frames()
         logging.info("prompt received, %d camera frame(s) available", len(images))
         result = google_generate_content(gary_prompt, images)

@@ -76,6 +76,8 @@
     width: 52px; height: 52px; border-radius: 50%;
   }
   label.toggle { display: flex; align-items: center; gap: .4rem; cursor: pointer; }
+  label.withimage { margin-top: .7rem; font-size: .85rem; color: var(--dim); }
+  label.withimage:hover { color: var(--ink); }
 
   h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
        color: var(--dim); margin: 0 0 .6rem; font-weight: 600; }
@@ -100,6 +102,77 @@
   .reply.hidden { display: none; }
   .err { border-left-color: #c9584f; color: #ffb3ad; }
   .note { color: var(--dim); font-size: .8rem; margin-top: .5rem; }
+
+  .slider { display: flex; align-items: center; gap: .8rem; }
+  /* Styled rather than left to accent-color, because the unstyled track is
+     near-white and glares against the dark panels. */
+  input[type=range] {
+    flex: 1; min-width: 0; height: 1.15rem; cursor: pointer;
+    -webkit-appearance: none; appearance: none; background: transparent;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: .35rem; border-radius: 999px;
+    background: #131317; border: 1px solid var(--line);
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; margin-top: -.36rem;
+    width: 1rem; height: 1rem; border: 0; border-radius: 50%;
+    background: var(--accent);
+  }
+  input[type=range]::-moz-range-track {
+    height: .35rem; border-radius: 999px;
+    background: #131317; border: 1px solid var(--line);
+  }
+  input[type=range]::-moz-range-progress {
+    height: .35rem; border-radius: 999px; background: var(--accent);
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 1rem; height: 1rem; border: 0; border-radius: 50%;
+    background: var(--accent);
+  }
+  input[type=range]:focus-visible { outline: 2px solid var(--accent);
+                                    outline-offset: 2px; }
+  input[type=range]:disabled { opacity: .4; cursor: default; }
+  .slider .value { min-width: 3rem; text-align: right; font-size: .9rem; }
+  .slider .state { color: var(--dim); font-size: .8rem; min-width: 5rem; }
+
+  /* Collapsed by default. These controls drive the hardware directly with no
+     interpretation, so the page should not invite anyone to reach for them
+     without meaning to. */
+  details.advanced { margin: 1.6rem 0 1rem; padding-top: 1rem;
+                     border-top: 1px solid var(--line); }
+  details.advanced > summary {
+    cursor: pointer; list-style: none; display: flex; align-items: center;
+    gap: .5rem; margin-bottom: .8rem; font-size: .8rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
+  }
+  details.advanced > summary::-webkit-details-marker { display: none; }
+  /* The chevron is the expand button, and it turns to point down when open. */
+  details.advanced > summary::before {
+    content: ''; flex: none; width: .4rem; height: .4rem;
+    border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg); transition: transform .15s ease;
+  }
+  details.advanced[open] > summary::before { transform: rotate(45deg); }
+  details.advanced > summary:hover { color: var(--ink); }
+  summary .warn { text-transform: none; letter-spacing: 0; font-weight: 400;
+                  color: #c9584f; }
+
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         background: #131317; border-radius: 4px; padding: .05rem .3rem;
+         font-size: .9em; color: var(--ink); }
+
+  /* Newest at the top, so the answer to what you just sent is where you are
+     already looking and the box does not have to be scrolled. */
+  .log { margin-top: .7rem; border-radius: 6px; background: #131317;
+         max-height: 12rem; overflow-y: auto; font-size: .85rem; }
+  .log.hidden { display: none; }
+  .log div { padding: .35rem .6rem; border-bottom: 1px solid var(--line);
+             white-space: pre-wrap; word-break: break-word; }
+  .log div:last-child { border-bottom: 0; }
+  .log .sent { color: var(--dim); }
+  .log .bad { color: #ffb3ad; }
 
   .status { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .8rem;
             color: var(--dim); }
@@ -167,19 +240,71 @@
       <button class="primary" id="askBtn">Ask</button>
     </div>
     <div class="reply hidden" id="askReply"></div>
+    <label class="toggle withimage">
+      <input type="checkbox" id="askImage"> Send a camera image with the question
+    </label>
     <p class="note">Goes to Gemini. He answers out loud and moves his mouth.</p>
   </div>
 
-  <div class="panel">
-    <h2>Gary says</h2>
-    <div class="row">
-      <input type="text" id="sayText" placeholder="Words to put in his mouth"
-             autocomplete="off">
-      <button id="sayBtn">Say it</button>
+  <details class="advanced" id="advanced">
+    <summary>
+      Advanced
+      <span class="warn">overrides, not everyday use</span>
+    </summary>
+
+    <div class="panel">
+      <h2>Gary says</h2>
+      <div class="row">
+        <input type="text" id="sayText" placeholder="Words to put in his mouth"
+               autocomplete="off">
+        <button id="sayBtn">Say it</button>
+      </div>
+      <div class="reply hidden" id="sayReply"></div>
+      <p class="note">Spoken verbatim. No model involved.</p>
     </div>
-    <div class="reply hidden" id="sayReply"></div>
-    <p class="note">Spoken verbatim. No model involved.</p>
-  </div>
+
+    <div class="panel">
+      <h2>Volume</h2>
+      <div class="slider">
+        <input type="range" id="volume" min="0" max="100" step="5" value="35"
+               aria-label="How loud Gary speaks" disabled>
+        <span class="value mono" id="volumeValue">—</span>
+        <span class="state" id="volumeState">reading…</span>
+      </div>
+      <p class="note">
+        A gain on his audio, not the system mixer, so it leaves everything else
+        on the Pi alone. He says the new level back at that volume, so let go of
+        the slider and listen. Saved on the robot, and it stays put across
+        restarts.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Servo commands</h2>
+      <div class="row">
+        <input type="text" id="cmdText" class="mono" placeholder="HH50 HV+5"
+               autocomplete="off" spellcheck="false">
+        <button id="cmdBtn">Send</button>
+      </div>
+      <div class="log hidden" id="cmdLog"></div>
+      <p class="note">
+        Straight down the serial link. A two-letter servo code followed by a
+        value, nothing in between: <code>HH50</code> absolute percent of travel,
+        <code>HH+5</code> relative, <code>DP</code> for default positions.
+        Several separated by spaces move together. Up and down recall what you
+        sent before.
+      </p>
+      <p class="note">
+        Head <code>HH</code> <code>HV</code> <code>HM</code> &middot;
+        right arm <code>RB</code> <code>RW</code> <code>RT</code> <code>RI</code>
+        <code>RM</code> <code>RR</code> <code>RP</code> &middot;
+        left hand <code>LW</code> <code>LT</code> <code>LI</code> <code>LM</code>
+        <code>LR</code> <code>LP</code>. The firmware clamps to each servo's own
+        limits, and answers <code>E100</code> for a code it does not have.
+      </p>
+    </div>
+
+  </details>
 
   <div class="panel">
     <div class="status" id="status">checking services…</div>
@@ -222,7 +347,9 @@
     polling(document.visibilityState === 'visible' && live.checked);
   });
 
-  function wire(btnId, inputId, replyId, url, busyLabel) {
+  // `extra` adds fields to the request body, for whatever the box needs beyond
+  // the text itself.
+  function wire(btnId, inputId, replyId, url, busyLabel, extra) {
     var btn = document.getElementById(btnId);
     var input = document.getElementById(inputId);
     var reply = document.getElementById(replyId);
@@ -235,10 +362,16 @@
       btn.textContent = busyLabel;
       reply.className = 'reply hidden';
 
+      var body = { text: text };
+      if (extra) {
+        var more = extra();
+        for (var key in more) { body[key] = more[key]; }
+      }
+
       fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text })
+        body: JSON.stringify(body)
       }).then(function (r) {
         return r.json().then(function (body) { return { ok: r.ok, body: body }; });
       }).then(function (res) {
@@ -262,11 +395,16 @@
     });
   }
 
-  wire('askBtn', 'askText', 'askReply', '/api/ask', 'Thinking…');
+  wire('askBtn', 'askText', 'askReply', '/api/ask', 'Thinking…', function () {
+    return { image: document.getElementById('askImage').checked };
+  });
   wire('sayBtn', 'sayText', 'sayReply', '/api/say', 'Speaking…');
 
-  // How far one nudge moves, as a percentage of servo travel.
-  var STEP = 5;
+  // How far one nudge moves, as a percentage of servo travel. Tilt gets twice
+  // the step because the neck servo covers much less of the frame per percent
+  // than the twist does - measured below, 27px against 75px for the same 5%.
+  var PAN_STEP = 5;
+  var TILT_STEP = 10;
   // Which way the servos go, measured on the robot by phase-correlating frames
   // before and after a step: HH-5 moved the scene -75px, so the head turned
   // right; HV-5 moved it -27px vertically, so the head tilted down. Flip a sign
@@ -302,10 +440,10 @@
   }
 
   var MOVES = {
-    up:     function () { return { tilt: -TILT_SIGN * STEP }; },
-    down:   function () { return { tilt: TILT_SIGN * STEP }; },
-    left:   function () { return { pan: -PAN_SIGN * STEP }; },
-    right:  function () { return { pan: PAN_SIGN * STEP }; },
+    up:     function () { return { tilt: -TILT_SIGN * TILT_STEP }; },
+    down:   function () { return { tilt: TILT_SIGN * TILT_STEP }; },
+    left:   function () { return { pan: -PAN_SIGN * PAN_STEP }; },
+    right:  function () { return { pan: PAN_SIGN * PAN_STEP }; },
     center: function () { return { center: true }; }
   };
 
@@ -315,6 +453,153 @@
       if (build) { move(build()); }
     });
   });
+
+  // Volume. Loaded from the robot rather than assumed, so the slider starts
+  // where he actually is, and written when the drag ends rather than on every
+  // pixel of it.
+  (function volumeSlider() {
+    var slider = document.getElementById('volume');
+    var readout = document.getElementById('volumeValue');
+    var state = document.getElementById('volumeState');
+
+    function show(gain) { readout.textContent = Math.round(gain * 100) + '%'; }
+
+    function settle(res) {
+      if (res.ok && typeof res.body.volume === 'number') {
+        slider.value = Math.round(res.body.volume * 100);
+        show(res.body.volume);
+        return true;
+      }
+      state.textContent = res.body.error_message || 'unavailable';
+      return false;
+    }
+
+    function ask(options) {
+      return fetch('/api/volume', options).then(function (r) {
+        return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+      });
+    }
+
+    ask().then(function (res) {
+      if (settle(res)) { state.textContent = ''; slider.disabled = false; }
+    }).catch(function () { state.textContent = 'unavailable'; });
+
+    slider.addEventListener('input', function () { show(slider.value / 100); });
+
+    slider.addEventListener('change', function () {
+      // Disabled for the whole round trip, which lasts as long as Gary takes to
+      // say the number. That is what stops a quick series of drags from queuing
+      // announcements that talk over each other.
+      slider.disabled = true;
+      state.textContent = 'saying it…';
+      ask({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ volume: slider.value / 100 })
+      }).then(function (res) {
+        if (settle(res)) { state.textContent = 'saved'; }
+      }).catch(function (e) {
+        state.textContent = 'failed: ' + e;
+      }).then(function () { slider.disabled = false; });
+    });
+  })();
+
+  // Advanced starts closed for anyone who has never opened it, but is
+  // remembered per browser afterwards - testing servos should not mean
+  // re-opening the section on every reload.
+  (function rememberAdvanced() {
+    var advanced = document.getElementById('advanced');
+    var KEY = 'gary.advanced';
+    try {
+      if (localStorage.getItem(KEY) === 'open') { advanced.open = true; }
+      advanced.addEventListener('toggle', function () {
+        localStorage.setItem(KEY, advanced.open ? 'open' : 'closed');
+      });
+    } catch (e) {
+      // Storage blocked, as in private browsing. It just always starts closed.
+    }
+  })();
+
+  // The raw command box behaves like a console rather than like the Ask and Say
+  // boxes: what came back is kept in a log instead of replacing the last reply,
+  // and the text is left in the box after sending so a value can be nudged and
+  // fired again, which is most of what testing a servo consists of.
+  (function commandBox() {
+    var input = document.getElementById('cmdText');
+    var btn = document.getElementById('cmdBtn');
+    var log = document.getElementById('cmdLog');
+    var MAX_LINES = 30;
+
+    var history = [];
+    var at = -1;  // How far back the arrow keys have walked; -1 is the live box.
+
+    function note(text, cls) {
+      var line = document.createElement('div');
+      if (cls) { line.className = cls; }
+      line.textContent = text;
+      log.insertBefore(line, log.firstChild);
+      while (log.childNodes.length > MAX_LINES) {
+        log.removeChild(log.lastChild);
+      }
+      log.classList.remove('hidden');
+      log.scrollTop = 0;
+    }
+
+    function send() {
+      var text = input.value.trim();
+      if (!text) { return; }
+
+      if (history[0] !== text) { history.unshift(text); }
+      at = -1;
+      btn.disabled = true;
+      note('› ' + text, 'sent');
+
+      fetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text })
+      }).then(function (r) {
+        return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+      }).then(function (res) {
+        if (res.ok) {
+          // The server uppercases and re-splits what was typed, so say what
+          // actually went down the wire whenever that is not what was typed -
+          // otherwise a stray comma or a lowercase code silently reads as
+          // having been accepted verbatim.
+          var sent = (res.body.commands || []).join(' ');
+          var reply = res.body.response || 'SUCCESS';
+          note(sent && sent !== text ? 'sent as ' + sent + ' — ' + reply : reply);
+          // A head command changes what the camera is pointed at, so pick up a
+          // new frame - after the same delay as the arrow pads, because the
+          // Arduino acknowledges a command before the servo has travelled.
+          setTimeout(loadFrame, 600);
+        } else {
+          note(res.body.error_message || 'failed', 'bad');
+        }
+      }).catch(function (e) {
+        note('console unreachable: ' + e, 'bad');
+      }).then(function () {
+        btn.disabled = false;
+        input.focus();
+        input.select();
+      });
+    }
+
+    btn.addEventListener('click', send);
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { send(); return; }
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') { return; }
+      if (!history.length) { return; }
+      e.preventDefault();
+      at = at + (e.key === 'ArrowUp' ? 1 : -1);
+      if (at >= history.length) { at = history.length - 1; }
+      if (at < 0) { at = -1; input.value = ''; return; }
+      input.value = history[at];
+      // Caret to the end, or it lands wherever it was in the old text.
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+  })();
 
   var NAMES = { servo: 'servos', brain: 'brain', vision: 'vision', ears: 'ears' };
   function refreshStatus() {

@@ -16,7 +16,7 @@ Configuration, all optional:
     GARY_PIPER_VOICE         path to a .onnx voice
     GARY_PIPER_LENGTH_SCALE  phoneme length; below 1.0 is faster speech
     GARY_ALSA_DEVICE         aplay device, default "default"
-    GARY_TTS_VOLUME          playback gain 0.0-1.0, default 0.7
+    GARY_TTS_VOLUME          playback gain 0.0-1.0, default 0.35
 
 
 Why this synthesizes to a file rather than streaming
@@ -69,7 +69,7 @@ PIPER_VOICE = os.environ.get("GARY_PIPER_VOICE",
 LENGTH_SCALE = os.environ.get("GARY_PIPER_LENGTH_SCALE", "0.75")
 ALSA_DEVICE = os.environ.get("GARY_ALSA_DEVICE", "default")
 # Playback gain, 0.0 to 1.0. Applied to the samples, not the system mixer.
-VOLUME = float(os.environ.get("GARY_TTS_VOLUME", "0.7"))
+VOLUME = float(os.environ.get("GARY_TTS_VOLUME", "0.35"))
 
 # tmpfs if it exists, so a wav per utterance does not chew at the SD card.
 _RUN_DIR = "/run/user/%d" % os.getuid()

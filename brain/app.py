@@ -28,6 +28,11 @@ FRAME_TIMEOUT = 8
 # A stashed frame older than this belongs to an abandoned exchange.
 FRAME_MAX_AGE = 60
 
+# Gemini answers in about a second; anything much longer is a stall, not
+# thinking. Bounded so one bad connection cannot hold Gary up indefinitely.
+GEMINI_TIMEOUT = float(os.environ.get("GARY_GEMINI_TIMEOUT", "12"))
+GEMINI_ATTEMPTS = int(os.environ.get("GARY_GEMINI_ATTEMPTS", "2"))
+
 # The ears report that someone started and stopped speaking. They know nothing
 # about cameras - this service decides those moments are worth photographing,
 # which is why a robot with no camera runs the same ears unchanged.
@@ -166,21 +171,34 @@ Answer in 15 words or less."
     #print(json_body)
 
     json_body = json.dumps(json_body).encode('utf-8')
-    headers = {'Content-Type': 'application/json'}
-    req = urllib.request.Request(url)
-    req.add_header('Content-Type', 'application/json')
-    req.add_header('Content-Length', len(json_body))
-    with urllib.request.urlopen( req , json_body) as response:
-        response_text = response.read()
 
-    json_response = json.loads(response_text)
-#     print(json_response)
-    first_response = json_response["candidates"][0]["content"]["parts"][0]["text"]
-    print(first_response)
-    #jdata = json.loads(json_response)
-    #return json_response("candidates")[0]("content")("parts")[0]("text") #doing nothing with response
+    # This call used to have no timeout, so a stalled connection hung for as
+    # long as the network felt like it. Gemini normally answers in about a
+    # second, but occasional ~33s stalls were measured from this Pi - not DNS,
+    # not IPv6, and not an unreachable endpoint, all of which were ruled out,
+    # so most likely something on the way out of the building. A bounded
+    # attempt plus a retry turns a 33s wait into about GEMINI_TIMEOUT + 1s.
+    last_error = None
+    for attempt in range(GEMINI_ATTEMPTS):
+        req = urllib.request.Request(url)
+        req.add_header('Content-Type', 'application/json')
+        req.add_header('Content-Length', len(json_body))
+        try:
+            with urllib.request.urlopen(req, json_body, timeout=GEMINI_TIMEOUT) as response:
+                json_response = json.loads(response.read())
+            first_response = json_response["candidates"][0]["content"]["parts"][0]["text"]
+            print(first_response)
+            return first_response
+        except Exception as e:
+            last_error = e
+            logging.warning("gemini attempt %d failed: %s", attempt + 1, e)
 
-    return first_response
+    # Answer with something rather than raising, which would return a 500 and
+    # leave Gary standing there silently. This also covers the 503s Gemini
+    # returns under load.
+    logging.error("gemini unreachable after %d attempts: %s",
+                  GEMINI_ATTEMPTS, last_error)
+    return "My brain is fuzzy right now. Ask me again in a moment."
 
 
 def speak(text):

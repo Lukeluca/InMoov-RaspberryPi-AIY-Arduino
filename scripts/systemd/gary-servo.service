@@ -17,6 +17,10 @@ WorkingDirectory=/home/pi/gary/servo_api
 Environment=PYTHONUNBUFFERED=1
 # Voice settings. Volume is a gain on the samples, so it does not disturb
 # system audio. Lower length_scale is faster speech. See servo_api/tts.py.
+#
+# GARY_TTS_VOLUME here is only the starting point. Once the volume is set
+# through the API - which is what the console's slider does - the value in
+# servo_api/.env wins, and editing this line stops having any effect.
 Environment=GARY_TTS_VOLUME=0.35
 Environment=GARY_PIPER_LENGTH_SCALE=0.75
 ExecStart=/usr/bin/python3 /home/pi/gary/servo_api/server.py

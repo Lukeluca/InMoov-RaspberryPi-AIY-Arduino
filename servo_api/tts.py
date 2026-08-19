@@ -17,6 +17,13 @@ Configuration, all optional:
     GARY_PIPER_LENGTH_SCALE  phoneme length; below 1.0 is faster speech
     GARY_ALSA_DEVICE         aplay device, default "default"
     GARY_TTS_VOLUME          playback gain 0.0-1.0, default 0.35
+    GARY_SETTINGS_FILE       where a volume set at runtime is remembered
+
+Volume is the one setting that can be changed while Gary is running, because it
+is the one you tune by standing in the room and listening. set_volume() writes
+it to the settings file and play() reads that file per utterance, so a change
+takes effect on the next thing he says with nothing restarted. The environment
+variable is the default for a robot that has never had it set.
 
 
 Why this synthesizes to a file rather than streaming
@@ -68,12 +75,125 @@ PIPER_VOICE = os.environ.get("GARY_PIPER_VOICE",
                              TTS_HOME + "/voices/en_GB-alan-low.onnx")
 LENGTH_SCALE = os.environ.get("GARY_PIPER_LENGTH_SCALE", "0.75")
 ALSA_DEVICE = os.environ.get("GARY_ALSA_DEVICE", "default")
-# Playback gain, 0.0 to 1.0. Applied to the samples, not the system mixer.
-VOLUME = float(os.environ.get("GARY_TTS_VOLUME", "0.35"))
+
+# Playback gain, 0.0 to 1.0. Applied to the samples, not the system mixer. Only
+# the default: what the settings file holds wins, see volume().
+DEFAULT_VOLUME = float(os.environ.get("GARY_TTS_VOLUME", "0.35"))
+
+# Settings changed at runtime live here, in KEY=VALUE lines. Beside this module
+# rather than in the working directory, so it does not matter who started the
+# service or from where. It is a .env, which .gitignore already excludes.
+SETTINGS_FILE = os.environ.get(
+    "GARY_SETTINGS_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+VOLUME_KEY = "GARY_TTS_VOLUME"
+
+# Two callers can set the volume at once - Flask is threaded - and the file is
+# read-modify-written, so the write needs to be serialised.
+_settings_lock = threading.Lock()
 
 # tmpfs if it exists, so a wav per utterance does not chew at the SD card.
 _RUN_DIR = "/run/user/%d" % os.getuid()
 TMP_DIR = _RUN_DIR if os.path.isdir(_RUN_DIR) else tempfile.gettempdir()
+
+
+def _clamp_volume(value):
+    """A gain in 0.0-1.0. Raises ValueError on something that is not a number."""
+    return max(0.0, min(1.0, float(value)))
+
+
+def _read_setting(key):
+    """One KEY=VALUE from the settings file, or None if it is not in there.
+
+    Parsed by hand rather than with python-dotenv, to keep a dependency out of
+    the speaking path that the servo API needs nowhere else. Blank lines and
+    comments are ignored; the last assignment wins, as a shell would have it.
+    """
+    try:
+        with open(SETTINGS_FILE) as handle:
+            lines = handle.readlines()
+    except IOError:
+        return None
+    for line in reversed(lines):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, separator, value = line.partition("=")
+        if separator and name.strip() == key:
+            return value.strip().strip("'\"")
+    return None
+
+
+def volume():
+    """The gain to play at: what was last set, else the environment default.
+
+    Read per utterance rather than cached, so setting it takes effect on the
+    next thing Gary says, and so editing the file by hand works too.
+    """
+    stored = _read_setting(VOLUME_KEY)
+    if stored is None:
+        return DEFAULT_VOLUME
+    try:
+        return _clamp_volume(stored)
+    except ValueError:
+        # A hand-edited file should not silence him, so fall back rather than
+        # raise out of the middle of an utterance.
+        print("ignoring unreadable %s in %s: %r"
+              % (VOLUME_KEY, SETTINGS_FILE, stored))
+        return DEFAULT_VOLUME
+
+
+def set_volume(value):
+    """Store the playback gain and return what was stored, clamped to 0.0-1.0.
+
+    Only the one assignment is rewritten, so anything else in the file survives
+    - which matters because this is a .env, and a .env is where keys live. The
+    file is replaced by renaming a complete copy over it, so an interrupted
+    write cannot leave a truncated file with the rest of the settings lost.
+    """
+    value = _clamp_volume(value)
+    assignment = "%s=%.2f\n" % (VOLUME_KEY, value)
+
+    with _settings_lock:
+        try:
+            with open(SETTINGS_FILE) as handle:
+                lines = handle.readlines()
+        except IOError:
+            lines = []
+
+        kept = []
+        replaced = False
+        for line in lines:
+            name, separator, _ = line.partition("=")
+            if separator and name.strip() == VOLUME_KEY:
+                # Substitute the first, drop any duplicates after it.
+                if not replaced:
+                    kept.append(assignment)
+                    replaced = True
+                continue
+            kept.append(line)
+        if not replaced:
+            if kept and not kept[-1].endswith("\n"):
+                kept[-1] += "\n"
+            kept.append(assignment)
+
+        handle = tempfile.NamedTemporaryFile(
+            "w", dir=os.path.dirname(SETTINGS_FILE) or ".", delete=False)
+        try:
+            handle.writelines(kept)
+            handle.flush()
+            os.fsync(handle.fileno())
+            handle.close()
+            # NamedTemporaryFile is 0600; keep whatever the file had, so a
+            # settings file shared with something else stays readable to it.
+            if lines:
+                os.chmod(handle.name, os.stat(SETTINGS_FILE).st_mode & 0o7777)
+            os.rename(handle.name, SETTINGS_FILE)
+        except Exception:
+            discard(handle.name)
+            raise
+
+    return value
 
 
 def piper_available():
@@ -197,7 +317,7 @@ def synthesize(text):
 
 
 def play(path):
-    """Play a wav, attenuated by GARY_TTS_VOLUME. Blocks until it finishes.
+    """Play a wav, attenuated to the current volume. Blocks until it finishes.
 
     The gain is applied to the samples rather than to the mixer, so Gary's
     loudness is his own setting and does not change system audio for anything
@@ -211,8 +331,9 @@ def play(path):
         rate = source.getframerate()
         frames = source.readframes(source.getnframes())
 
-    if VOLUME != 1.0:
-        frames = audioop.mul(frames, width, VOLUME)
+    gain = volume()
+    if gain != 1.0:
+        frames = audioop.mul(frames, width, gain)
 
     # Piped rather than given a filename, so the attenuated audio never needs
     # a second temporary file.

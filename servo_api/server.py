@@ -51,42 +51,85 @@ def close_mouth():
         print("could not close the mouth: %s" % e)
 
 
+def say(text, move_mouth=True):
+    """Speak, moving the jaw with it. Blocks until the audio has finished.
+
+    Moving the mouth belongs here rather than in whoever asked for the speech.
+    This service owns the speaker and the servos, so everything that makes Gary
+    talk gets a moving mouth without needing to know that the jaw is HM.
+    """
+    # Synthesis first, mouth second. Piper takes about two seconds to render a
+    # sentence, and opening the jaw before that left Gary sitting open-mouthed
+    # and silent while the model worked. With the old Pico voice synthesis took
+    # 0.12s, so the gap was invisible.
+    audio = tts.synthesize(text)
+    try:
+        if move_mouth:
+            # Synchronous: the jaw has to be open before the sound starts.
+            gary.send_commands({"commands": [MOUTH_OPEN]})
+        tts.play(audio)
+    finally:
+        tts.discard(audio)
+        # In a finally so a failed utterance does not leave him sitting there
+        # with his mouth hanging open. Fire and forget, so the response is not
+        # held up by the serial round trip; the lock in Arduino keeps it safe
+        # alongside other callers.
+        if move_mouth:
+            closer = threading.Thread(target=close_mouth)
+            closer.daemon = True
+            closer.start()
+
+
 @cross_origin(app)
 @app.route("/api/voice/text2speech", methods=["POST"])
 def text_to_speech():
-
-    if request.method == "POST":
-        body = request.get_json()
-        text = body['text']
-        # Moving the mouth belongs here rather than in whoever asked for the
-        # speech. This service owns the speaker and the servos, so everything
-        # that makes Gary talk gets a moving mouth without needing to know that
-        # the jaw is HM.
-        move_mouth = body.get('move_mouth', True)
-
-        # Synthesis first, mouth second. Piper takes about two seconds to
-        # render a sentence, and opening the jaw before that left Gary sitting
-        # open-mouthed and silent while the model worked. With the old Pico
-        # voice synthesis took 0.12s, so the gap was invisible.
-        audio = tts.synthesize(text)
-        try:
-            if move_mouth:
-                # Synchronous: the jaw has to be open before the sound starts.
-                gary.send_commands({"commands": [MOUTH_OPEN]})
-            tts.play(audio)
-        finally:
-            tts.discard(audio)
-            # In a finally so a failed utterance does not leave him sitting
-            # there with his mouth hanging open. Fire and forget, so the
-            # response is not held up by the serial round trip; the lock in
-            # Arduino keeps it safe alongside other callers.
-            if move_mouth:
-                closer = threading.Thread(target=close_mouth)
-                closer.daemon = True
-                closer.start()
-
+    body = request.get_json()
+    text = body['text']
+    say(text, move_mouth=body.get('move_mouth', True))
     return json.dumps({'error_message': 'success', 'text': text })
-    
+
+@cross_origin(app)
+@app.route("/api/voice/volume", methods=["GET", "POST"])
+def voice_volume():
+    """Read or set how loud Gary speaks, as a gain of 0.0 to 1.0.
+
+    Stored in a file rather than held in memory, so it survives a restart, and
+    read again per utterance, so it applies to the next thing he says.
+
+    Setting it makes Gary announce the new level, because the only way to judge
+    a volume is to hear it. Pass {"announce": false} to set it silently.
+    """
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        if "volume" not in body:
+            return Response(json.dumps({'error_message': 'no volume given'}),
+                            status=400, mimetype='application/json')
+        try:
+            value = tts.set_volume(body["volume"])
+        except (TypeError, ValueError):
+            return Response(
+                json.dumps({'error_message': 'volume must be a number'}),
+                status=400, mimetype='application/json')
+        print("volume set to %.2f" % value)
+
+        # After storing it, never before, so what you hear is the new level.
+        # Synchronous on purpose: the caller waits out the utterance, which
+        # stops a dragged slider from stacking up overlapping announcements.
+        if body.get("announce", True):
+            try:
+                say("%d" % round(value * 100))
+            except Exception as e:
+                # A silent robot is a bad reason to report the volume as unset,
+                # since the value is already stored by this point.
+                print("could not announce the volume: %s" % e)
+                return json.dumps({'error_message': 'success', 'volume': value,
+                                   'announced': False})
+
+        return json.dumps({'error_message': 'success', 'volume': value})
+
+    return json.dumps({'error_message': 'success', 'volume': tts.volume()})
+
+
 @cross_origin(app)
 @app.route("/api/video", methods=["GET"])
 def capture():

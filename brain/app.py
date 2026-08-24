@@ -93,6 +93,11 @@ def speech_event():
     event = payload.get("event")
 
     if event == "poke":
+        # A poke starts a session like any other trigger. Nothing was said, but
+        # somebody pressed the button, so give them a few seconds to get into
+        # frame if they want to be looked at - which is the same five seconds
+        # that would let them step back into it.
+        start_tracking()
         # On a thread: speaking blocks until the audio has finished, and the
         # publisher gives up after a few seconds, so answering inline would look
         # to the ears like an event that never arrived.
@@ -104,6 +109,13 @@ def speech_event():
     slot = {"speech.started": "started", "speech.ended": "ended"}.get(event)
     if slot is None:
         return json.dumps({'error_message': 'ignored', 'event': event})
+
+    if event == "speech.started":
+        # Someone is talking to him, which is the moment to start looking at
+        # them. The ears know nothing about this, the same way they know
+        # nothing about the camera - deciding what a speech event is worth is
+        # this service's job.
+        start_tracking()
 
     thread = threading.Thread(target=grab_frame, args=(slot,))
     thread.daemon = True
@@ -133,7 +145,9 @@ def index():
 
         head_flourish()
         speak(result)
-        head_recenter()
+        if not tracking_owns_the_reset():
+            # No session running, so nothing else will put his head back.
+            head_recenter()
         
         #cache for future discussions, using the prompt as the key, and the result as the value
         cache[gary_prompt] = result
@@ -256,6 +270,43 @@ def speak(text):
 # touching this service at all.
 GESTURE_URL = os.environ.get("GARY_SERVO_URL",
                              "http://localhost:5000") + "/api/motion/gesture"
+TRACKING_URL = VISION_URL + "/tracking"
+
+
+def start_tracking():
+    """Ask vision to begin, or extend, a tracking session.
+
+    Every trigger calls this. Extending rather than restarting is what makes a
+    follow-up question buy another session budget without interrupting the
+    tracking already under way.
+
+    Fire and forget, and a missing vision service is an ordinary condition
+    rather than an error - plenty of InMoovs have no camera, which is the same
+    reason grab_frame shrugs one off.
+    """
+    async_request(TRACKING_URL + "/start", {})
+
+
+def tracking_owns_the_reset():
+    """Whether a tracking session is running, and so will reset him itself.
+
+    Asked rather than remembered, because the session's start and its end
+    arrive as separate requests here. If one is running, this service must not
+    also recenter: the session ends with its own body_reset when the person
+    leaves, and a recenter on top would be a gesture outranking the tracker,
+    reaching centre, and then handing the head straight back to a tracker still
+    aimed at a face - undoing itself.
+    """
+    try:
+        response = requests.get(TRACKING_URL, timeout=2)
+        if response.status_code != 200:
+            return False
+        return bool(response.json()["tracking"]["open"])
+    except (requests.exceptions.RequestException, ValueError, KeyError,
+            TypeError):
+        # No vision service, or it cannot answer. Then nothing is tracking and
+        # the reset is ours, exactly as it was before tracking existed.
+        return False
 
 
 def play_gesture(name):

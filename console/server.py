@@ -13,6 +13,7 @@ hardware do not have to serve a user interface.
     GET  /api/gestures     what Gary can do
     POST /api/gesture      play one named gesture
     POST /api/head         nudge the head, or recenter it
+    POST /api/tracking/start   begin, or extend, a face-tracking session
     POST /api/command      raw servo commands, for testing by hand
     GET  /api/volume       how loud Gary speaks
     POST /api/volume       set how loud Gary speaks
@@ -41,6 +42,10 @@ FRAME_TIMEOUT = 15
 STATUS_TIMEOUT = 3
 # A servo command waits on the Arduino replying, which takes a second or two.
 MOVE_TIMEOUT = 20
+# Extending a running session is instant, but a cold start opens the camera
+# and spends 1.5s letting auto-exposure settle before it answers - generous
+# headroom on top of that.
+TRACKING_TIMEOUT = 10
 # Reading or writing the volume is a small file operation, nothing more.
 VOLUME_TIMEOUT = 5
 
@@ -305,6 +310,38 @@ def head():
     # joint's travel can say where it actually stopped.
     return _json({"error_message": "success", "duration": duration,
                   "targets": upstream.get("targets") or upstream.get("joints")})
+
+
+@app.route("/api/tracking/start", methods=["POST"])
+def tracking_start():
+    """Begin, or extend, a face-tracking session. No text, no gesture - the
+    button on the page does exactly this and nothing else.
+
+    The session ends itself on the tracker's own timeouts, the same as the
+    tracking any ordinary question already starts, so there is deliberately
+    no stop route here.
+    """
+    try:
+        response = requests.post(VISION_URL + "/tracking/start",
+                                 timeout=TRACKING_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        return _json({"error_message": "vision unreachable: %s" % e}, 503)
+    if response.status_code != 200:
+        try:
+            message = response.json().get("error_message", "")
+        except ValueError:
+            message = ""
+        # 503 means tracking itself is unavailable (no camera, no OpenCV, no
+        # cascade) - a real answer, not a gateway failure, so it keeps its
+        # own status rather than being flattened like an unreachable service.
+        status = 503 if response.status_code == 503 else 502
+        return _json({"error_message": message or ("tracking failed (%d)"
+                                                   % response.status_code)},
+                     status)
+    try:
+        return _json(response.json())
+    except ValueError:
+        return _json({"error_message": "vision sent a non-JSON reply"}, 502)
 
 
 @app.route("/api/command", methods=["POST"])

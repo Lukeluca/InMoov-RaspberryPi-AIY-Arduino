@@ -232,6 +232,7 @@
         <input type="checkbox" id="live" checked> Poll every 2s
       </label>
       <button id="refresh">Refresh now</button>
+      <button id="trackBtn">Start tracking</button>
       <span id="viewstate">idle</span>
     </div>
   </div>
@@ -354,6 +355,30 @@
 
   live.addEventListener('change', function () { polling(live.checked); });
   document.getElementById('refresh').addEventListener('click', loadFrame);
+
+  // Just a start: the session ends itself on the tracker's own timeouts, the
+  // same as tracking a question already starts, so there is nothing here to
+  // wire up for stopping it.
+  (function trackButton() {
+    var btn = document.getElementById('trackBtn');
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      var was = btn.textContent;
+      btn.textContent = 'Starting…';
+      fetch('/api/tracking/start', { method: 'POST' }).then(function (r) {
+        return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+      }).then(function (res) {
+        viewstate.textContent = res.ok
+          ? 'tracking: ' + (res.body.note || 'started')
+          : 'tracking: ' + (res.body.error_message || 'failed');
+      }).catch(function (e) {
+        viewstate.textContent = 'tracking: console unreachable: ' + e;
+      }).then(function () {
+        btn.disabled = false;
+        btn.textContent = was;
+      });
+    });
+  })();
 
   // Stop polling when the tab is hidden. A forgotten tab would otherwise hold
   // the camera open indefinitely, and the camera LED would stay lit with

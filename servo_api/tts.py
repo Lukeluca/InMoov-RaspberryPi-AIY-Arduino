@@ -1,7 +1,7 @@
 """Turning Gary's words into sound.
 
 Two engines. Piper is a small neural model and sounds like a person; Pico is
-the 2013 formant synthesiser that ships with the AIY image and sounds like a
+the 2013 formant synthesizer that ships with the AIY image and sounds like a
 satnav. Piper is used when it is installed, and Pico otherwise, so a robot
 without Piper still talks.
 
@@ -89,7 +89,7 @@ SETTINGS_FILE = os.environ.get(
 VOLUME_KEY = "GARY_TTS_VOLUME"
 
 # Two callers can set the volume at once - Flask is threaded - and the file is
-# read-modify-written, so the write needs to be serialised.
+# read-modify-written, so the write needs to be serialized.
 _settings_lock = threading.Lock()
 
 # tmpfs if it exists, so a wav per utterance does not chew at the SD card.

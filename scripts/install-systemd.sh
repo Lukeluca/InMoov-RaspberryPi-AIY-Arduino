@@ -12,7 +12,7 @@
 #
 #   ./scripts/install-systemd.sh
 #
-# Afterwards:
+# Afterward:
 #   systemctl --user start gary.target      start everything now
 #   systemctl --user stop gary.target       stop everything
 #   systemctl --user status gary-servo      check one service

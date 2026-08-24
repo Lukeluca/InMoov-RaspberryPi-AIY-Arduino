@@ -56,7 +56,10 @@ The Arduino firmware is **not** in this repository. It lives in
 [ArduinoServoController-UART-InMoov](https://github.com/Lukeluca/ArduinoServoController-UART-InMoov),
 and is treated here as a fixed API: the Pi sends it short ASCII commands (`HH:60`,
 `HM+15`) over serial, two letters for the servo plus an absolute or relative value.
-See `servo_api/pin_and_servos.py` for the servo map.
+The `SERVOS[]` table in `UART_InMoov.ino` is the servo map: pins, travel limits
+and per-servo calibration all live there, and deliberately nowhere on the Pi.
+Positions are percentages of each joint's safe range precisely so this side does
+not have to know that the right middle finger is mounted backwards.
 
 ## Setup
 
@@ -210,6 +213,62 @@ reasoning and what revisiting it would involve.
 Voice and speed are configurable with `GARY_PIPER_VOICE` and
 `GARY_PIPER_LENGTH_SCALE`; below 1.0 is faster speech.
 
+## Gestures
+
+Movement is a layered engine in `servo_api/motion.py` rather than one-shot
+commands. It holds a pose model, ticks at 20 Hz, and eases between positions,
+so a movement is a movement rather than a servo slamming to its target.
+
+Gestures themselves are data, in `servo_api/gestures.yaml`:
+
+```yaml
+nod:
+  keyframes:
+    - at: 0.0
+      HV: "+0"
+    - at: 0.22
+      HV: "-9"
+    - at: 0.45
+      HV: "+0"
+```
+
+A keyframe is a time in seconds plus the joints it moves. Adding a gesture is an
+edit to that file, not a code change.
+
+**Every value must be quoted.** Unquoted, YAML reads `HV: +7` as the number 7,
+which means "go to 7% of travel" — near the bottom of the joint — rather than
+"nudge 7% further on". The loader refuses bare numbers for exactly that reason.
+
+| | |
+|---|---|
+| `"50"` | absolute, 50% of that joint's safe range |
+| `"+7"` / `"-7"` | relative, exactly 7% on from where the joint started |
+| `"+5..10"` | relative, a random 5 to 10% on |
+| `"+/-5..10"` | relative, 5 to 10% in a direction picked at random |
+
+Relative always means relative to the start of the gesture, never the previous
+keyframe, so `"+0"` is "back where you began". A range is drawn once per play,
+which is how one written-down gesture varies each time it runs.
+
+```
+GET  /api/motion/gestures            what he can do, and any load problems
+POST /api/motion/gesture             {"name": "nod"}, or keyframes inline
+GET  /api/motion/pose                where the engine believes he is
+POST /api/motion/pose                {"joints": {"HH": 60}, "duration": 0.6}
+POST /api/motion/nudge               {"joints": {"HH": 8}} relative, eased
+POST /api/motion/stop                latch everything still
+```
+
+`/api/commands` is unchanged and still sends raw commands straight to the
+Arduino. That is deliberate: it is the calibration path, and it should keep
+behaving exactly like the firmware does, with no easing in the way.
+
+The engine drives `HH`, `HV`, `RB`, `RW` and the five right fingers. It does not
+drive the mouth — the speech path owns that — and a gesture naming `HM` is
+rejected. Nothing self-initiates: there is no idle or breathing loop, because
+continuous small movement keeps every servo energized and audibly buzzing, which
+in a shared office is worse than stillness.
+
 ## Remote console
 
 `http://<pi>:5004/` — a single page showing what Gary sees, with two boxes:
@@ -283,10 +342,12 @@ These are real and worth understanding before you invest time:
 ```
 brain/       conversation: Gemini, speech recognition, web UI
 servo_api/   motion and speech output; owns the Arduino serial link
+  motion.py     the pose model, tick loop and layers
+  gestures.yaml the gestures themselves, as data
 scripts/     start_all.sh
 archive/     superseded earlier versions, not in use
 ```
 
-## Licence
+## License
 
 MIT — see [LICENSE](LICENSE).

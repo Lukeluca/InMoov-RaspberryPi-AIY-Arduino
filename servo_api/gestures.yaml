@@ -112,13 +112,22 @@ shake:
 # 0 is closed for every finger. That is the firmware's external contract, not a
 # quirk of the mounting, and it was confirmed by driving the thumb.
 #
-# RB, RW, RI, RM, RR and RP are deliberately absent. None of them has ever been
-# driven by the engine, and this gesture would move them unattended at the end
-# of every interaction. Each joins after it has been tried on its own.
+# All five fingers close at 0 - including the middle one, which is mounted
+# backwards and flagged `inverted` in the firmware table. That inversion is
+# handled inside the Arduino, so nothing on this side needs to know which way a
+# finger is built. Verified by hand, one finger at a time.
+#
+# RB and RW are still deliberately absent. Neither the bicep nor the wrist has
+# ever been driven by the engine, and this gesture would move them unattended at
+# the end of every interaction. Each joins after it has been tried on its own.
 body_reset:
   keyframes:
     - at: 1.0
       RT: "0"
+      RI: "0"
+      RM: "0"
+      RR: "0"
+      RP: "0"
     - at: 2.0
       HH: "50"
       HV: "75"

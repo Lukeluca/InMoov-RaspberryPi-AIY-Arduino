@@ -92,3 +92,29 @@ shake:
       HH: "-6"
     - at: 1.15
       HH: "+0"
+
+# --- returning to rest -------------------------------------------------------
+
+# What an interaction ends with. A conversation can leave more than the head
+# moved, so this puts the body back rather than only recentering the head.
+# `head_recenter` stays for when only the head needs it.
+#
+# The thumb closes in a second; the head takes two, which reads as an
+# intentional reset rather than a snap back and is easier on the printed parts.
+# Slower buys nothing - at two seconds the steps are already finer than a hobby
+# servo's own deadband. Each joint follows only the keyframes that name it, so
+# the two happen at once at different speeds.
+#
+# 0 is closed for every finger. That is the firmware's external contract, not a
+# quirk of the mounting, and it was confirmed by driving the thumb.
+#
+# RB, RW, RI, RM, RR and RP are deliberately absent. None of them has ever been
+# driven by the engine, and this gesture would move them unattended at the end
+# of every interaction. Each joins after it has been tried on its own.
+body_reset:
+  keyframes:
+    - at: 1.0
+      RT: "0"
+    - at: 2.0
+      HH: "50"
+      HV: "50"

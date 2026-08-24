@@ -139,7 +139,18 @@ class Gesture(object):
         points = [(at, joints[code]) for at, joints in self.keyframes
                   if code in joints]
         if points[0][0] > 0:
-            points.insert(0, (0.0, start_values.get(code, UNKNOWN_POSITION)))
+            if code in start_values:
+                start = start_values[code]
+            else:
+                # Nothing has positioned this joint since the service started,
+                # and the firmware positions nothing at boot - checked on the
+                # robot. Easing from an assumed 50 would command 50 on the way
+                # to the target and move a joint that may already have been
+                # where it needed to be: a closed hand would half-open before
+                # closing again. Start at the target instead and go straight
+                # there.
+                start = points[0][1]
+            points.insert(0, (0.0, start))
         return points
 
     def value_at(self, elapsed, start_values):
@@ -376,8 +387,12 @@ class GestureLayer(Layer):
         now = time.monotonic() if now is None else now
         with self._lock:
             # Where the joints are now, not where the previous gesture began.
+            # Joints whose position is unknown are left out rather than filled
+            # in with the 50 that `pose.get` would return, so `_track` can tell
+            # "at 50" from "no idea" and jump instead of easing from a fiction.
             self._start_values = dict(
-                (code, self._pose.get(code)) for code in gesture.joints)
+                (code, self._pose.get(code)) for code in gesture.joints
+                if self._pose.known(code))
             self._gesture = gesture
             self._started_at = now
 
@@ -516,7 +531,12 @@ class MotionEngine(object):
         the layer only ever handles absolute numbers.
         """
         self._refuse_if_stopped()
-        start = dict((code, self.pose.get(code)) for code in spec.joints)
+        # Unknown joints omitted, as in GestureLayer.play. A relative value on
+        # an unknown joint still has to guess at 50, since there is nothing
+        # better to measure from - the firmware guesses the same way - but an
+        # absolute one ignores the start entirely and lands correctly.
+        start = dict((code, self.pose.get(code)) for code in spec.joints
+                     if self.pose.known(code))
         self.play(spec.resolve(start))
 
     def move_to(self, joints, duration=0.6, easing="ease_in_out"):

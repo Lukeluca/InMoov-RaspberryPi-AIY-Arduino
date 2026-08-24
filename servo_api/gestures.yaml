@@ -1,0 +1,94 @@
+# Gary's gestures.
+#
+# One entry per gesture, each a list of keyframes. A keyframe is a time in
+# seconds plus the joints it moves. Joints not mentioned at a keyframe are left
+# alone, and each joint is interpolated only across the frames that name it, so
+# two joints can move on different schedules inside one gesture.
+#
+# EVERY VALUE MUST BE QUOTED. Unquoted, YAML reads `HV: +7` as the number 7,
+# which would mean "go to 7% of travel" - almost the bottom of the joint -
+# rather than "nudge 7% further on". The loader refuses bare numbers for
+# exactly this reason, so a mistake here fails at startup instead of on the
+# robot. The forms are:
+#
+#   "50"          absolute, 50% of that joint's safe range
+#   "+7" / "-7"   relative, exactly 7% on from where the joint STARTED
+#   "+5..10"      relative, a random 5 to 10% on
+#   "+/-5..10"    relative, 5 to 10% in a direction picked at random
+#
+# Relative always means relative to the start of the gesture, never to the
+# previous keyframe - so "+0" is "back where you began", and a gesture cannot
+# accumulate its way somewhere nobody intended. A range is drawn once per play,
+# which is how a written-down gesture still varies each time it runs.
+#
+# On direction: for HV, "+" is up and "-" is down. For HH it is simply one way
+# or the other; which way is which depends on how the servo is mounted, and
+# nothing here needs to care.
+#
+# The engine drives HH, HV, RB, RW and the five right fingers. It deliberately
+# does not drive the mouth (HM) - the speech path owns that - and a gesture
+# naming HM is rejected.
+#
+# Adding a hand gesture is just another entry here. Bring one up carefully: the
+# fingers have never been exercised by the engine, and a servo is strong enough
+# to damage a printed part, so try a narrow movement while standing next to him
+# before widening it.
+
+# --- the three that used to be hand-built in brain/app.py -------------------
+
+# As he starts speaking. A small movement in some direction, which is enough to
+# stop the moment he begins talking looking like a machine switching on.
+head_flourish:
+  keyframes:
+    - at: 0.5
+      HH: "+/-5..10"
+      HV: "+/-5..10"
+
+# As he starts thinking, before the model is called. Looking up slightly reads
+# as considering the question - and it fills what is otherwise about three
+# seconds of a robot standing perfectly still.
+think:
+  keyframes:
+    - at: 0.5
+      HV: "+5..10"
+
+# When he stops speaking. Absolute rather than relative, because this is the
+# one movement whose whole purpose is arriving somewhere known. Slower than the
+# others: it is usually the longest way to travel.
+head_recenter:
+  keyframes:
+    - at: 0.8
+      HH: "50"
+      HV: "50"
+
+# --- answers -----------------------------------------------------------------
+
+# Two dips rather than one - a single dip reads as a glitch, two reads as
+# agreement. Returns to where it started, so it can be used from any pose.
+nod:
+  keyframes:
+    - at: 0.0
+      HV: "+0"
+    - at: 0.22
+      HV: "-9"
+    - at: 0.45
+      HV: "+0"
+    - at: 0.67
+      HV: "-7"
+    - at: 0.9
+      HV: "+0"
+
+# The same shape sideways, and a little slower, which is what keeps it from
+# looking like a twitch. Ends where it began.
+shake:
+  keyframes:
+    - at: 0.0
+      HH: "+0"
+    - at: 0.25
+      HH: "-10"
+    - at: 0.6
+      HH: "+10"
+    - at: 0.9
+      HH: "-6"
+    - at: 1.15
+      HH: "+0"

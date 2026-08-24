@@ -6,7 +6,6 @@ import json
 #import cv2
 import asyncio
 import threading
-from pin_and_servos import machinations
 
 import aiy.voice.tts
 
@@ -60,17 +59,29 @@ class Arduino:
     # Arduino is constructed, as the Sight class does.
     _serial_lock = threading.Lock()
 
-    # send_commands has no terminator to read up to, so it reads until the line
-    # comes back empty - that is, until the serial read times out. This value
-    # is therefore the fixed cost of every command.
+    # The firmware prints exactly one "C:" echo per newline it receives. That
+    # echo is the terminator this read loop used to lack: counting echoes says
+    # the batch has been parsed, so we no longer learn it by waiting for the
+    # port to fall silent.
     #
-    # Measured on the robot: the Arduino replies in about 14ms. Timing an
-    # invalid servo shows it, because that is rejected synchronously and the
-    # read loop returns on the error rather than waiting for silence. The
-    # firmware contains no delay() calls and does not wait for the servo to
-    # travel before replying, so there is nothing slower to allow for. A
-    # quarter of a second leaves roughly 18x headroom.
-    COMMAND_TIMEOUT = 0.25
+    # Why that mattered. The old loop read until readline() came back empty -
+    # until the read timed out - so every command cost the full timeout of
+    # 0.25s, while the Arduino had in fact answered in about 14ms. Four
+    # commands a second was the whole robot's ceiling; smooth motion needs
+    # twenty-five.
+    #
+    # This is now only a liveness guard - how long to wait for a firmware that
+    # is not answering at all - and costs nothing when it is answering, because
+    # readline() returns as soon as the newline arrives.
+    ECHO_TIMEOUT = 0.25
+
+    # The per-command "M:" and "E1xx:" lines follow the echo rather than
+    # preceding it, so returning the moment the last echo lands would leave
+    # them in the buffer for the next command's read to mistake for its own -
+    # the same way the boot banner would if it were not drained. They are
+    # already on the wire by then, about 3ms each at 115200, so this bounds the
+    # gap between two lines rather than the whole drain.
+    DRAIN_TIMEOUT = 0.02
 
     # Opening the port resets the Arduino, which then takes a second or two to
     # boot and print its banner. Draining that needs much longer than a command
@@ -84,30 +95,76 @@ class Arduino:
 
         self.ser.readlines()
         # Banner drained; from here on a command should not cost two seconds.
-        self.ser.timeout = self.COMMAND_TIMEOUT
+        self.ser.timeout = self.ECHO_TIMEOUT
 
     def send_commands(self, formatted_commands):
         with Arduino._serial_lock:
             return self._send_commands_locked(formatted_commands)
 
     def _send_commands_locked(self, formatted_commands):
+        # One echo per newline, blank lines included: the firmware treats any
+        # newline as a complete line and answers with "C:" plus whatever it
+        # held, even nothing. A payload not ending in a newline has no echo
+        # coming for its last fragment, which is a caller's bug rather than
+        # something to sit and wait out.
+        expected_echoes = formatted_commands.count("\n")
+
+        # Anything still unread belongs to a batch that has already returned -
+        # a previous call that gave up on a wedged firmware, say - and would
+        # otherwise be counted as this batch's replies.
+        self.ser.reset_input_buffer()
         self.ser.write(formatted_commands.encode("ASCII"))
+
         res = Request()
-        while True:
+        error_code = None
+        echoes = 0
+
+        while echoes < expected_echoes:
             msg = self.ser.readline()
+            #DEBUG - uncomment this to see all messages from Arduino
+            #print(msg)
 
             if msg == b"":
-                return res.send_success()
+                # Timed out with echoes outstanding: the firmware is wedged, or
+                # the board is resetting. Say so rather than reporting a move
+                # that may not have happened.
+                return res.send_error(112)
 
-            if msg.startswith(b"E100"):
-                return res.send_error(100)
-            #DEBUG - uncomment this to see all messages from Arduino
-            #else:
-                #print(msg)
-    
+            if msg.startswith(b"C:"):
+                echoes += 1
+            else:
+                error_code = self._error_code(msg) or error_code
+
+        # The trailing per-command lines for the final echo.
+        self.ser.timeout = self.DRAIN_TIMEOUT
+        try:
+            while True:
+                msg = self.ser.readline()
+                if msg == b"":
+                    break
+                error_code = self._error_code(msg) or error_code
+        finally:
+            self.ser.timeout = self.ECHO_TIMEOUT
+
+        if error_code is not None:
+            return res.send_error(error_code)
+        return res.send_success()
+
     @staticmethod
-    def available_machinations():
-        return machinations
+    def _error_code(line):
+        """The number in an "E1xx:" line, or None if it is not an error.
+
+        The firmware reports four: an unknown servo, a missing value, a servo
+        in its table but not enabled, and a line too short to hold a code. The
+        old loop matched E100 alone, so a command rejected for any of the other
+        three came back as a success.
+        """
+        if not line.startswith(b"E1"):
+            return None
+        try:
+            return int(line[1:4])
+        except ValueError:
+            return None
 
 
 class Request:
@@ -130,10 +187,16 @@ class Request:
         Error code will come from Arduino and map to error message
         from server dictionary
         """
+        # 100 to 103 come from the firmware. 111 and 112 are ours: nothing on
+        # the Arduino knows about the camera, and a firmware that does not
+        # answer cannot report that it did not answer.
         errors = {
             "100": "Invalid servo",
-            "101": "Invalid commands",
+            "101": "Missing value, or invalid commands",
+            "102": "Servo not enabled",
+            "103": "Malformed command",
             "111": "Camera failed",
+            "112": "Arduino did not reply",
             "unknown": "Unknown error",
         }
 

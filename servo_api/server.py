@@ -411,6 +411,42 @@ def motion_gesture():
 
 
 @cross_origin(app)
+@app.route("/api/motion/track", methods=["POST"])
+def motion_track():
+    """Report where a face is, as offsets from the centre of frame.
+
+        {"dx": 0.12, "dy": -0.05}    a face this far off centre
+        {"face": null}               nothing in view
+
+    Offsets rather than servo positions: `vision` reports what it can see and
+    the engine decides what to do about it, so the control loop lives beside the
+    pose model it is correcting. A gesture outranks this, so tracking gives the
+    head up for the length of a gesture and picks it up again afterwards.
+    """
+    body = request.get_json(silent=True) or {}
+
+    if "dx" not in body and "dy" not in body:
+        # Anything else means "no face" - including an explicit {"face": null}.
+        engine.lose_face()
+        return json.dumps({'error_message': 'success', 'tracking': False})
+
+    try:
+        dx = float(body.get("dx", 0.0))
+        dy = float(body.get("dy", 0.0))
+    except (TypeError, ValueError):
+        return _error("dx and dy must be numbers")
+    if not (-1.0 <= dx <= 1.0 and -1.0 <= dy <= 1.0):
+        return _error("dx and dy are fractions of the frame, so -1 to 1")
+
+    try:
+        targets = engine.look_at(dx, dy)
+    except motion.Suppressed as e:
+        return _stopped(e)
+    return json.dumps({'error_message': 'success', 'tracking': True,
+                       'dx': dx, 'dy': dy, 'targets': targets})
+
+
+@cross_origin(app)
 @app.route("/api/motion/stop", methods=["POST"])
 def motion_stop():
     """Abort whatever is running and refuse new movement for a few seconds.

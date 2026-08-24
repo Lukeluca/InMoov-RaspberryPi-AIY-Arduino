@@ -16,6 +16,7 @@ movement traces back to something that asked for it.
 The reasoning and the measurements behind all of this are in MOTION-DESIGN.md.
 """
 
+import math
 import os
 import random
 import re
@@ -53,6 +54,54 @@ UNKNOWN_POSITION = 50.0
 # `systemctl --user stop gary-servo` is the control for "do not move while I
 # work on you".
 STOP_COOLDOWN = 3.0
+
+
+# Head movement per unit of offset from the centre of frame, from the console's
+# measured figures: at 1280x720, HH-5 moved the scene -75px horizontally and
+# HV-5 moved it -27px vertically. So a full frame width of error is 1280/15
+# percent of HH travel, and a full height is 720/5.4 of HV. The signs fall out
+# of the same measurement - HH decreasing turns the head toward a face on the
+# right, because that is the direction the scene moved.
+# Re-measured 2026-08-24 by phase-correlating two frames either side of an HH +8
+# nudge: +12.9 px per percent against the 15 assumed here, and the sign
+# confirmed. Left at 15 deliberately - it makes each correction about 14%
+# smaller than strictly needed, which is the safe direction for a proportional
+# loop, and two measurements disagreeing by that much are not worth chasing.
+TRACK_HH_GAIN = 1280.0 / 15.0
+TRACK_HV_GAIN = 720.0 / 5.4
+
+# Fraction of the error aimed at per update. The gain above is measured but
+# approximate, and correcting all of it invites overshoot; converging over a few
+# updates reads as watching rather than snapping.
+TRACK_DAMPING = 0.6
+
+# Offsets smaller than this are ignored. Without a dead zone the head hunts a
+# face forever - and because the layer smooths its own movement, that hunting is
+# continuous rather than twitchy, which is worse: it never settles.
+TRACK_DEAD_ZONE = 0.05
+
+# Most a target may move in one update, so one bad detection cannot throw the
+# head across its range. Was 20, which let a single frame swing the head a fifth
+# of its travel.
+TRACK_MAX_STEP = 12.0
+
+# Tracking is kept off the ends of travel. A tracker that believes a false
+# positive walks the head to a limit and sits there - observed doing exactly
+# that, reaching HH 3 and HV 100 - and a head against its stop looks broken even
+# when the firmware is clamping safely. Deliberate poses and gestures are not
+# limited this way; only the layer that follows a guess.
+TRACK_LIMIT_MIN = 10.0
+TRACK_LIMIT_MAX = 90.0
+
+# How long a target stays good without an update. `vision` owns the real session
+# clocks; this is only a net for vision dying mid-session, so it is short.
+TRACK_STALE = 1.5
+
+# Time constant for the layer's own smoothing. Tracking eases itself rather than
+# playing gestures, so a new target mid-movement only changes the destination -
+# there is no ease to restart, which is what keeps continuous tracking smooth
+# where repeated nudges visibly pulse.
+TRACK_TAU = 0.35
 
 
 class Suppressed(Exception):
@@ -442,6 +491,88 @@ class GestureLayer(Layer):
             return values
 
 
+class TrackLayer(Layer):
+    """Follows a face, below gestures so a gesture always wins the head.
+
+    Fed normalised offsets from the centre of frame rather than servo values -
+    `vision` reports where the face is and this decides what to do about it, so
+    the control loop lives next to the pose model it is correcting.
+
+    Claims nothing when there is no face. That is what makes "hold still after
+    losing someone" need no mechanism: the layer goes quiet, no layer claims the
+    head, the engine sends nothing, and the head simply stays where it is.
+    """
+
+    priority = 20
+    name = "track"
+
+    def __init__(self, pose, tick_seconds=TICK_SECONDS):
+        self._pose = pose
+        self._tick_seconds = tick_seconds
+        self._lock = threading.Lock()
+        self._target = {}
+        self._current = {}
+        self._updated_at = 0.0
+
+    def look_at(self, dx, dy, now=None):
+        """Aim at a face `dx`, `dy` from centre, each as a fraction of frame.
+
+        Returns the targets, which is what the caller usually wants to see - a
+        correction that hit the end of the head's travel moved less than the
+        offset asked for.
+        """
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            for code, offset, gain in (("HH", float(dx), TRACK_HH_GAIN),
+                                       ("HV", float(dy), TRACK_HV_GAIN)):
+                if abs(offset) < TRACK_DEAD_ZONE:
+                    # Close enough. Whatever target is already set stays, so the
+                    # head holds rather than drifting back.
+                    continue
+                base = self._current.get(code)
+                if base is None:
+                    base = self._pose.get(code)
+                    self._current[code] = base
+                delta = -offset * gain * TRACK_DAMPING
+                delta = max(-TRACK_MAX_STEP, min(TRACK_MAX_STEP, delta))
+                self._target[code] = max(TRACK_LIMIT_MIN,
+                                         min(TRACK_LIMIT_MAX, base + delta))
+            self._updated_at = now
+            return dict(self._target)
+
+    def lost(self):
+        """No face in view. Stop claiming; the head holds where it is."""
+        with self._lock:
+            self._target = {}
+            self._current = {}
+
+    def tracking(self):
+        with self._lock:
+            return bool(self._target)
+
+    def desired(self, now):
+        with self._lock:
+            if now - self._updated_at > TRACK_STALE:
+                # Nothing has reported in - vision has died or stopped. Let go
+                # rather than holding the head wherever the last frame put it.
+                self._target = {}
+                self._current = {}
+                return {}
+            if not self._target:
+                return {}
+            # Exponential approach rather than a fixed ramp: it slows as it
+            # arrives, and a new target part way through simply moves the
+            # destination.
+            alpha = 1.0 - math.exp(-self._tick_seconds / TRACK_TAU)
+            out = {}
+            for code, target in self._target.items():
+                current = self._current.get(code, target)
+                current += (target - current) * alpha
+                self._current[code] = current
+                out[code] = current
+            return out
+
+
 class MotionEngine(object):
     """Ticks, resolves the layers, and sends what changed.
 
@@ -454,7 +585,8 @@ class MotionEngine(object):
         self._tick_seconds = tick_seconds
         self.pose = Pose()
         self.gesture = GestureLayer(self.pose)
-        self._layers = [self.gesture]
+        self.track = TrackLayer(self.pose, tick_seconds=tick_seconds)
+        self._layers = [self.track, self.gesture]
 
         self._suppress_until = 0.0
         self._sent = {}       # joint -> the integer last put on the wire
@@ -572,6 +704,7 @@ class MotionEngine(object):
         """
         now = time.monotonic() if now is None else now
         self.gesture.stop()
+        self.track.lost()
         self._pending = {}
         self._suppress_until = now + STOP_COOLDOWN
         return STOP_COOLDOWN
@@ -579,6 +712,15 @@ class MotionEngine(object):
     def resume(self):
         """Clear the cooldown early. Never required - it expires on its own."""
         self._suppress_until = 0.0
+
+    def look_at(self, dx, dy):
+        """Aim the head at a face, as offsets from the centre of frame."""
+        self._refuse_if_stopped()
+        return self.track.look_at(dx, dy)
+
+    def lose_face(self):
+        """No face in view. Never refused - it only ever stops movement."""
+        self.track.lost()
 
     def note_external_command(self, lines):
         """Adopt raw commands sent behind the engine's back.
@@ -718,6 +860,7 @@ class MotionEngine(object):
             "stopped_for": round(self.suppressed(), 1),
             "tick_hz": round(1.0 / self._tick_seconds, 1),
             "gesture": self.gesture.current(),
+            "tracking": self.track.tracking(),
             "pose": self.pose.snapshot(),
             "sent": dict(self._sent),
             "pending": sorted(self._pending),

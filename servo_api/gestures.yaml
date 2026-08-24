@@ -45,12 +45,87 @@ head_flourish:
       HV: "+/-5..10"
 
 # As he starts thinking, before the model is called. Looking up slightly reads
-# as considering the question - and it fills what is otherwise about three
-# seconds of a robot standing perfectly still.
+# as considering the question, and the fingers drum through the rest of the
+# wait - the Gemini call takes about three seconds, and impatient tapping
+# turns that dead air into a personality trait instead of a robot standing
+# motionless.
+#
+# RI, RM, RR and RP, each staggered 0.4s after the last, so a finger is
+# always still rising as the previous one comes back down - that overlap is
+# what reads as a rolling wave across the hand instead of four fingers moving
+# in lockstep. Two full rolls per finger, back to back, since one alone read
+# as a single twitch rather than drumming. Each open/close leg is a full
+# second, the speed already confirmed on the robot: fingers are binary, so
+# there is nothing to gain by rushing a transition that will not read as
+# motion until it is nearly done anyway.
+#
+# RT (thumb) opens at the start and holds until RI's second roll finishes at
+# 4.0, then closes - the thumb can only close once the index is already
+# closed, so closing it any earlier would fight the linkage. The 0.1s gap
+# before RT starts closing is margin against the two commands landing on the
+# same tick; RM and RP are still mid-roll when the thumb closes, which is
+# fine, since the constraint is specifically thumb-after-index, not
+# thumb-after-everything.
+#
+# Absolute "0"/"100" throughout, not relative, so the gesture always starts
+# from the same shape regardless of what the hand was doing before, and if
+# Gemini overruns everything just holds at its last position instead of a
+# finger getting stuck mid-travel.
+#
+# RR and RP have never been driven ALONGSIDE other fingers before - only the
+# thumb/index interlock above is confirmed, and it is unknown whether any
+# other pair binds the same way. Watch this one closely the first time it
+# plays, same as any other first run of a new combination.
 think:
   keyframes:
     - at: 0.5
       HV: "+5..10"
+    - at: 0.0
+      RT: "100"
+    - at: 4.1
+      RT: "100"
+    - at: 5.1
+      RT: "0"
+    - at: 0.0
+      RI: "0"
+    - at: 1.0
+      RI: "100"
+    - at: 2.0
+      RI: "0"
+    - at: 3.0
+      RI: "100"
+    - at: 4.0
+      RI: "0"
+    - at: 0.4
+      RM: "0"
+    - at: 1.4
+      RM: "100"
+    - at: 2.4
+      RM: "0"
+    - at: 3.4
+      RM: "100"
+    - at: 4.4
+      RM: "0"
+    - at: 0.8
+      RR: "0"
+    - at: 1.8
+      RR: "100"
+    - at: 2.8
+      RR: "0"
+    - at: 3.8
+      RR: "100"
+    - at: 4.8
+      RR: "0"
+    - at: 1.2
+      RP: "0"
+    - at: 2.2
+      RP: "100"
+    - at: 3.2
+      RP: "0"
+    - at: 4.2
+      RP: "100"
+    - at: 5.2
+      RP: "0"
 
 # When he stops speaking. Absolute rather than relative, because this is the
 # one movement whose whole purpose is arriving somewhere known. Slower than the
@@ -117,9 +192,13 @@ shake:
 # handled inside the Arduino, so nothing on this side needs to know which way a
 # finger is built. Verified by hand, one finger at a time.
 #
-# RB and RW are still deliberately absent. Neither the bicep nor the wrist has
-# ever been driven by the engine, and this gesture would move them unattended at
-# the end of every interaction. Each joins after it has been tried on its own.
+# RW (wrist) has now been tried on its own and worked acceptably, so it joins
+# here alongside the head - "50" is a neutral guess, not a measured rest
+# point, until it's been watched landing there and corrected if needed.
+#
+# RB is still deliberately absent. The bicep has never been driven by the
+# engine, and this gesture would move it unattended at the end of every
+# interaction. It joins once it too has been tried on its own.
 body_reset:
   keyframes:
     - at: 1.0
@@ -131,3 +210,4 @@ body_reset:
     - at: 2.0
       HH: "50"
       HV: "75"
+      RW: "50"

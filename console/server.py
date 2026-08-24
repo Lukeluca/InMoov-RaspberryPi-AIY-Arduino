@@ -10,7 +10,9 @@ hardware do not have to serve a user interface.
     GET  /api/frame.jpg    latest camera frame, via vision
     POST /api/ask          ask Gemini - Gary answers out loud and moves
     POST /api/say          make Gary say something verbatim
-    POST /api/head         nudge the head, or recentre it
+    GET  /api/gestures     what Gary can do
+    POST /api/gesture      play one named gesture
+    POST /api/head         nudge the head, or recenter it
     POST /api/command      raw servo commands, for testing by hand
     GET  /api/volume       how loud Gary speaks
     POST /api/volume       set how loud Gary speaks
@@ -163,24 +165,97 @@ def say():
     return _json({"error_message": "success", "text": text})
 
 
+@app.route("/api/gestures", methods=["GET"])
+def gestures():
+    """What Gary can do, straight from the servo API's gesture file.
+
+    Proxied rather than listed in the page, so a new gesture in `gestures.yaml`
+    gets a button with no edit here. Load problems come through too.
+    """
+    try:
+        response = requests.get(SERVO_URL + "/api/motion/gestures",
+                                timeout=STATUS_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        return _json({"error_message": "servo api unreachable: %s" % e}, 503)
+    if response.status_code != 200:
+        return _json({"error_message": "gesture list failed (%d)"
+                      % response.status_code}, 502)
+    try:
+        return _json(response.json())
+    except ValueError:
+        return _json({"error_message": "servo api sent a non-JSON reply"}, 502)
+
+
+@app.route("/api/gesture", methods=["POST"])
+def gesture():
+    """Play one gesture by name.
+
+        {"name": "nod"}
+
+    Not checked against a list here: the servo API owns the file and answers
+    404 for a name it does not know, which is passed straight back. A second
+    copy of the names on this side would only go stale.
+    """
+    name = str((request.get_json(silent=True) or {}).get("name", "")).strip()
+    if not name:
+        return _json({"error_message": "no gesture named"}, 400)
+    try:
+        response = requests.post(SERVO_URL + "/api/motion/gesture",
+                                 json={"name": name}, timeout=MOVE_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        return _json({"error_message": "servo api unreachable: %s" % e}, 503)
+    if response.status_code != 200:
+        try:
+            message = response.json().get("error_message", "")
+        except ValueError:
+            message = ""
+        # An unknown gesture is the caller's mistake and a stop is a real
+        # answer, so both keep their own status rather than being flattened
+        # into a bad gateway.
+        status = (response.status_code
+                  if response.status_code in (404, 409) else 502)
+        return _json({"error_message": message or ("gesture failed (%d)"
+                                                   % response.status_code)},
+                     status)
+    try:
+        return _json(response.json())
+    except ValueError:
+        return _json({"error_message": "servo api sent a non-JSON reply"}, 502)
+
+
+# How long an eased head move takes. The engine interpolates rather than
+# jumping, so these are also how long the movement lasts, which is what the
+# page waits out before fetching a new frame. Recentring is slower because it
+# is usually a longer way to travel.
+HEAD_NUDGE_SECONDS = 0.4
+HEAD_CENTER_SECONDS = 0.8
+
+
 @app.route("/api/head", methods=["POST"])
 def head():
-    """Move the head, or recentre it.
+    """Move the head, or recenter it.
 
-        {"pan": 8}      turn, relative, as HH+8
-        {"tilt": -8}    tilt, relative, as HV-8
-        {"center": true}  absolute HH50 HV50
+        {"pan": 8}        turn, relative, eased
+        {"tilt": -8}      tilt, relative, eased
+        {"center": true}  back to the middle
 
-    Recentring is absolute on purpose. There is no position feedback from the
-    Arduino, so relative nudges accumulate error with nothing to correct it;
-    an absolute command is the only way back to a known pose.
+    These go through the motion engine, so the movement eases instead of
+    snapping and held presses sweep. Raw `HH+8` would land in the same place -
+    the firmware does relative arithmetic without drifting - but in one jump,
+    and leaves the pose model guessing.
+
+    This is the *arrow pad* path. Raw servo commands keep their own route,
+    deliberately unmediated - see `command()`.
     """
     payload = request.get_json(silent=True) or {}
-    commands = []
 
     if payload.get("center"):
-        commands.append("HH%d HV%d" % (HEAD_CENTER, HEAD_CENTER))
+        path = "/api/motion/pose"
+        duration = HEAD_CENTER_SECONDS
+        body = {"joints": {"HH": HEAD_CENTER, "HV": HEAD_CENTER},
+                "duration": duration}
     else:
+        joints = {}
         for axis, key in (("HH", "pan"), ("HV", "tilt")):
             value = payload.get(key)
             if value is None:
@@ -192,19 +267,41 @@ def head():
             if abs(value) > HEAD_STEP_LIMIT:
                 return _json({"error_message": "%s beyond +/-%d" % (key, HEAD_STEP_LIMIT)}, 400)
             if value:
-                commands.append("%s%+d" % (axis, value))
+                joints[axis] = value
 
-    if not commands:
-        return _json({"error_message": "nothing to move"}, 400)
+        if not joints:
+            return _json({"error_message": "nothing to move"}, 400)
+        path = "/api/motion/nudge"
+        duration = HEAD_NUDGE_SECONDS
+        body = {"joints": joints, "duration": duration}
 
     try:
-        response = requests.post(SERVO_URL + "/api/commands",
-                                 json={"commands": commands}, timeout=MOVE_TIMEOUT)
+        response = requests.post(SERVO_URL + path, json=body,
+                                 timeout=MOVE_TIMEOUT)
     except requests.exceptions.RequestException as e:
         return _json({"error_message": "servo api unreachable: %s" % e}, 503)
     if response.status_code != 200:
-        return _json({"error_message": "move failed (%d)" % response.status_code}, 502)
-    return _json({"error_message": "success", "commands": commands})
+        try:
+            message = response.json().get("error_message", "")
+        except ValueError:
+            message = ""
+        # A stop keeps its 409, so the page can say he is stopped rather than
+        # reporting a vague failure.
+        status = 409 if response.status_code == 409 else 502
+        return _json({"error_message": message or ("move failed (%d)"
+                                                   % response.status_code)},
+                     status)
+
+    try:
+        upstream = response.json()
+    except ValueError:
+        upstream = {}
+
+    # The duration goes back so the page can wait out the movement rather than
+    # guessing at it, and the targets so a nudge that ran into the end of a
+    # joint's travel can say where it actually stopped.
+    return _json({"error_message": "success", "duration": duration,
+                  "targets": upstream.get("targets") or upstream.get("joints")})
 
 
 @app.route("/api/command", methods=["POST"])
@@ -215,6 +312,22 @@ def command():
 
     Everything in one request goes down the serial link in a single write, which
     is also the only way to make two servos move together.
+
+    THIS STAYS RAW. It goes to `/api/commands` and reaches the firmware
+    unmediated - no easing, no pose model, no engine - because that is the
+    entire point of it: calibrating a joint, or checking a servo the engine
+    refuses to drive, means seeing exactly what the firmware does with exactly
+    what you typed. Routing it through the motion engine would make it a
+    friendlier control and a useless instrument. The arrow pads are the
+    mediated path; this one is deliberately not. Do not "unify" them.
+
+    Sending a relative command here does leave the engine's pose model unsure
+    where that joint is, and it marks it unknown. That is caution rather than
+    ignorance: the firmware would land somewhere exact, but predicting it from
+    here means replicating its per-servo degree table, which this side
+    deliberately has no copy of, and allowing for a step under a degree of
+    travel being silently dropped. The engine recovers on the next absolute
+    position it sends.
     """
     text = (request.get_json(silent=True) or {}).get("text", "").strip()
     if not text:

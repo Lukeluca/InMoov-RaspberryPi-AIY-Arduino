@@ -102,6 +102,10 @@
   .reply.hidden { display: none; }
   .err { border-left-color: #c9584f; color: #ffb3ad; }
   .note { color: var(--dim); font-size: .8rem; margin-top: .5rem; }
+  /* One button per gesture, built from the gesture file at load, so this has to
+     lay out however many there turn out to be rather than a fixed row. */
+  .gestures { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .gestures .empty { color: var(--dim); font-size: .8rem; align-self: center; }
 
   .slider { display: flex; align-items: center; gap: .8rem; }
   /* Styled rather than left to accent-color, because the unstyled track is
@@ -214,7 +218,7 @@
              stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
              stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
       </button>
-      <button class="pad pad-center" data-dir="center" title="Recentre the head">
+      <button class="pad pad-center" data-dir="center" title="Recenter the head">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none"
              stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <circle cx="12" cy="12" r="6"/>
@@ -244,6 +248,17 @@
       <input type="checkbox" id="askImage"> Send a camera image with the question
     </label>
     <p class="note">Goes to Gemini. He answers out loud and moves his mouth.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Gestures</h2>
+    <div class="gestures" id="gestures">
+      <span class="empty">loading…</span>
+    </div>
+    <div class="reply hidden" id="gestureReply"></div>
+    <p class="note">Movements from <code>gestures.yaml</code>, eased by the
+      motion engine. Each returns to where it started, except recentering,
+      which is the one that goes somewhere known.</p>
   </div>
 
   <details class="advanced" id="advanced">
@@ -400,6 +415,99 @@
   });
   wire('sayBtn', 'sayText', 'sayReply', '/api/say', 'Speaking…');
 
+  // The buttons are built from the gesture list rather than written into this
+  // page, so adding a gesture to gestures.yaml puts a button here with no edit
+  // to the template. The names are the file's, not a second copy of them.
+  var gestureBox = document.getElementById('gestures');
+  var gestureReply = document.getElementById('gestureReply');
+
+  function gestureButtons() {
+    return gestureBox.querySelectorAll('button');
+  }
+
+  function playGesture(name, duration) {
+    var buttons = gestureButtons();
+    Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
+    gestureReply.className = 'reply hidden';
+
+    fetch('/api/gesture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name })
+    }).then(function (r) {
+      return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+    }).then(function (res) {
+      // The reply arrives when the gesture STARTS, so both the frame refresh
+      // and re-enabling the buttons wait out the movement itself. The duration
+      // comes from the server so retuning a gesture in the file does not mean
+      // editing a number here as well.
+      var settle = ((res.ok ? res.body.duration : 0) || duration || 1) * 1000;
+      if (!res.ok) {
+        gestureReply.className = 'reply err';
+        gestureReply.textContent = res.body.error_message || 'gesture failed';
+        settle = 0;
+      } else {
+        setTimeout(loadFrame, settle + 250);
+      }
+      setTimeout(function () {
+        Array.prototype.forEach.call(buttons, function (b) { b.disabled = false; });
+      }, settle);
+    }).catch(function (e) {
+      gestureReply.className = 'reply err';
+      gestureReply.textContent = 'console unreachable: ' + e;
+      Array.prototype.forEach.call(buttons, function (b) { b.disabled = false; });
+    });
+  }
+
+  function loadGestures() {
+    fetch('/api/gestures').then(function (r) {
+      return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+    }).then(function (res) {
+      gestureBox.innerHTML = '';
+      if (!res.ok) {
+        gestureBox.innerHTML = '<span class="empty"></span>';
+        gestureBox.firstChild.textContent =
+          res.body.error_message || 'gestures unavailable';
+        return;
+      }
+      var all = res.body.gestures || {};
+      var names = Object.keys(all).sort();
+      if (!names.length) {
+        gestureBox.innerHTML = '<span class="empty">no gestures defined</span>';
+        return;
+      }
+      names.forEach(function (name) {
+        var g = all[name];
+        var button = document.createElement('button');
+        // Underscores are how the file names them; spaces are how people read
+        // them. The name sent back is always the file's.
+        button.textContent = name.replace(/_/g, ' ');
+        button.title = g.duration + 's, moves ' + (g.joints || []).join(' ');
+        button.addEventListener('click', function () {
+          playGesture(name, g.duration);
+        });
+        gestureBox.appendChild(button);
+      });
+      // A gesture that would not parse is absent from the list entirely, which
+      // would otherwise look like it was never written.
+      var problems = res.body.problems || [];
+      if (problems.length) {
+        var warn = document.createElement('span');
+        warn.className = 'empty';
+        warn.textContent = problems.length +
+          (problems.length === 1 ? ' gesture in the file could not be read'
+                                 : ' gestures in the file could not be read');
+        warn.title = problems.join('\n');
+        gestureBox.appendChild(warn);
+      }
+    }).catch(function (e) {
+      gestureBox.innerHTML = '<span class="empty"></span>';
+      gestureBox.firstChild.textContent = 'console unreachable: ' + e;
+    });
+  }
+
+  loadGestures();
+
   // How far one nudge moves, as a percentage of servo travel. Tilt gets twice
   // the step because the neck servo covers much less of the frame per percent
   // than the twist does - measured below, 27px against 75px for the same 5%.
@@ -424,11 +532,14 @@
       return r.json().then(function (b) { return { ok: r.ok, body: b }; });
     }).then(function (res) {
       if (res.ok) {
-        // Wait for the servo, not the acknowledgement. The Arduino replies as
-        // soon as it has parsed the command - it does not wait for the head to
-        // finish travelling - so refreshing immediately catches the move
-        // halfway through.
-        setTimeout(loadFrame, 600);
+        // Wait out the movement, not the acknowledgement. These moves are eased
+        // by the motion engine over a known duration, and the Arduino answers
+        // as soon as it has parsed each step, so refreshing on the reply
+        // catches the head still traveling. The server sends the duration back
+        // rather than the page assuming one, so retuning the easing does not
+        // mean remembering to edit a number here too.
+        var settle = ((res.body.duration || 0.6) * 1000) + 250;
+        setTimeout(loadFrame, settle);
       } else {
         viewstate.textContent = res.body.error_message || 'move failed';
       }
@@ -505,7 +616,7 @@
   })();
 
   // Advanced starts closed for anyone who has never opened it, but is
-  // remembered per browser afterwards - testing servos should not mean
+  // remembered per browser afterward - testing servos should not mean
   // re-opening the section on every reload.
   (function rememberAdvanced() {
     var advanced = document.getElementById('advanced');
@@ -570,8 +681,11 @@
           var reply = res.body.response || 'SUCCESS';
           note(sent && sent !== text ? 'sent as ' + sent + ' — ' + reply : reply);
           // A head command changes what the camera is pointed at, so pick up a
-          // new frame - after the same delay as the arrow pads, because the
-          // Arduino acknowledges a command before the servo has travelled.
+          // new frame once the servo has had time to travel; the Arduino
+          // acknowledges a command well before that. A fixed delay is right
+          // here, unlike the arrow pads: these commands are raw and unmediated,
+          // so the firmware drives the servo as fast as it can rather than
+          // easing it over a duration the page could wait out.
           setTimeout(loadFrame, 600);
         } else {
           note(res.body.error_message || 'failed', 'bad');

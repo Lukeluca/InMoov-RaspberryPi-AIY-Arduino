@@ -14,13 +14,14 @@ Environment=PYTHONUNBUFFERED=1
 # Release the camera after 30s idle, so the LED goes dark, the device is free
 # for raspistill, and no stale buffer is waiting for the next request.
 Environment=GARY_CAMERA_IDLE_TIMEOUT=30
-# Where a face lands in the frame when the head is genuinely aimed at it. The
-# camera is not on the head's centre line on most builds, so tracking that
-# centres a face in the picture leaves the head pointing past people. Measure
-# your own: aim the head somewhere, stand on that line, and read `last_raw`
-# from GET :5002/tracking. Left and up are negative. Unset means dead centre.
-#Environment=GARY_TARGET_DX=0.0
-#Environment=GARY_TARGET_DY=0.0
+# Where a face lands in the frame when the head is genuinely aimed at it, on
+# this build - not an env var here, because the camera is not on the head's
+# centre line and that offset turns out to depend on distance (parallax), so
+# one number is not enough. See SWEET_SPOTS in vision/tracker.py: a small
+# table, keyed on face width as a fraction of frame, measured by aiming the
+# head at a person standing at a given distance and reading `last_raw` from
+# GET :5002/tracking - confirmed against an annotated frame each time, not
+# guessed. Specific to this robot; measure your own the same way.
 ExecStart=/usr/bin/python3 /home/pi/gary/vision/server.py
 Restart=on-failure
 RestartSec=5

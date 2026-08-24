@@ -81,17 +81,50 @@ CAREFUL_NEIGHBORS = 4
 ESCALATE_AFTER = float(os.environ.get("GARY_ESCALATE_AFTER", "1.5"))
 
 # The camera is not on the head's centre line, so a face Gary is genuinely
-# looking at does not land in the middle of the frame. This is where "looking at
-# you" actually puts a face, as a fraction of frame from centre, negative being
-# left. Offsets are reported relative to it, which also means the motion
-# engine's dead zone becomes a box around this point rather than around the
-# middle - no change needed on that side, since it never knew about cameras.
+# looking at does not land in the middle of the frame. This is where "looking
+# at you" actually puts a face, as a fraction of frame from centre, negative
+# being left. Offsets are reported relative to it, which also means the
+# motion engine's dead zone becomes a box around this point rather than
+# around the middle - no change needed on that side, since it never knew
+# about cameras.
 #
-# Measure it rather than guessing: stand squarely in front of his face at a
-# normal distance and read `raw` from GET /tracking. Zero here keeps the old
-# behaviour of centring on the middle of the frame.
-TARGET_DX = float(os.environ.get("GARY_TARGET_DX", "0.0"))
-TARGET_DY = float(os.environ.get("GARY_TARGET_DY", "0.0"))
+# It is not one constant, though: the offset is a physical displacement
+# between the lens and the head's rotation axis, not an angular one, so how
+# far off-centre it lands also depends on distance - closer faces need a
+# bigger correction than far ones (parallax). So this is a small table of
+# (face width as a fraction of frame, dx, dy), each point measured by aiming
+# the head at a person standing at a given distance and reading `last_raw`
+# from GET /tracking, confirmed against an annotated frame each time rather
+# than guessed. Width, not distance, because width is what's actually
+# measured every frame and it is scale-invariant across the ordinary and
+# careful passes, which detect at different image widths.
+#
+# Between two measured points the target is interpolated linearly by width.
+# Outside the measured range it holds the nearest end rather than
+# extrapolating - a width far outside anything measured is more likely a bad
+# detection than a real one at an untested distance.
+#
+# Both measured 2026-08-24 with Luke confirmed in frame each time:
+#   far:  width 0.057 (near the detection cliff itself)
+#   near: width 0.385
+SWEET_SPOTS = (
+    (0.057, -0.211, -0.270),
+    (0.385, -0.258, -0.074),
+)
+
+
+def _target_for_width(width_frac):
+    """(dx, dy) "looking at them" should land at, for a face this wide."""
+    points = SWEET_SPOTS
+    if width_frac <= points[0][0]:
+        return points[0][1], points[0][2]
+    if width_frac >= points[-1][0]:
+        return points[-1][1], points[-1][2]
+    for (w0, dx0, dy0), (w1, dx1, dy1) in zip(points, points[1:]):
+        if w0 <= width_frac <= w1:
+            t = (width_frac - w0) / (w1 - w0)
+            return dx0 + (dx1 - dx0) * t, dy0 + (dy1 - dy0) * t
+    return points[-1][1], points[-1][2]  # unreachable; the table is sorted
 
 # Below this the cascade is matching texture rather than people. Also a useful
 # speed-up, since it skips the smallest and most numerous search windows.
@@ -135,6 +168,7 @@ class Tracker(object):
         self._misses = 0
         self._last_offset = None
         self._last_raw = None
+        self._last_target = None
         self._pending_offset = None
         self._rejected = 0
         self._last_end = None
@@ -315,9 +349,12 @@ class Tracker(object):
         sw, sh = gray.shape[1], gray.shape[0]
         raw = ((x + w / 2.0) / sw - 0.5, (y + h / 2.0) / sh - 0.5)
         self._last_raw = raw
-        # Relative to the sweet spot, so zero error means "looking at them"
-        # rather than "they are in the middle of the picture".
-        return (raw[0] - TARGET_DX, raw[1] - TARGET_DY)
+        target_dx, target_dy = _target_for_width(w / float(sw))
+        self._last_target = (target_dx, target_dy)
+        # Relative to the sweet spot for this width, so zero error means
+        # "looking at them" rather than "they are in the middle of the
+        # picture".
+        return (raw[0] - target_dx, raw[1] - target_dy)
 
     # -- plumbing ----------------------------------------------------------
 
@@ -346,6 +383,7 @@ class Tracker(object):
                 "last_offset": self._last_offset,
                 "rejected": self._rejected,
                 "last_raw": self._last_raw,
-                "sweet_spot": [TARGET_DX, TARGET_DY],
+                "last_target": self._last_target,
+                "sweet_spots": SWEET_SPOTS,
                 "last_end": self._last_end,
             }

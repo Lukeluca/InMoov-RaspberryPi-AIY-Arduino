@@ -38,11 +38,39 @@
 
 # As he starts speaking. A small movement in some direction, which is enough to
 # stop the moment he begins talking looking like a machine switching on.
+#
+# It also closes out whatever `think` was doing. `head_flourish` plays the
+# instant Gemini answers, which replaces `think` from wherever it had
+# reached - and Gemini answers in about a second, well before `think`'s own
+# 5.2s drumming finishes, so this is the ordinary case, not an edge one. A
+# gesture that stops claiming a joint simply abandons it there, so without
+# this the hand would freeze mid-drum, sometimes with a finger half open,
+# until whatever eventually plays body_reset - which is not guaranteed to be
+# soon, or at all, outside a tracking session. So every joint `think` might
+# have been using gets a defined place to land here too, on head_flourish's
+# own timeline rather than think's: the fingers close by 1.0s and the wrist
+# rests by 1.0s, both able to ease from wherever they actually are, whether
+# that is mid-swing or already closed because think finished on its own. The
+# thumb holds at "+0" - wherever it happened to be - until 1.1s, then closes,
+# because it can only close once the index already has; the fingers' own
+# close at 1.0s guarantees that by the time the thumb starts. None of this
+# delays speaking: gestures are fire-and-forget, so it all plays out in the
+# background while he talks.
 head_flourish:
   keyframes:
     - at: 0.5
       HH: "+/-5..10"
       HV: "+/-5..10"
+    - at: 1.0
+      RI: "0"
+      RM: "0"
+      RR: "0"
+      RP: "0"
+      RW: "100"
+    - at: 1.1
+      RT: "+0"
+    - at: 2.1
+      RT: "0"
 
 # As he starts thinking, before the model is called. Looking up slightly reads
 # as considering the question, and the fingers drum through the rest of the

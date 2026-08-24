@@ -3,7 +3,6 @@ import base64
 import logging
 import json
 import jsonify
-import random
 import requests
 import time
 import urllib.request
@@ -40,6 +39,14 @@ FRAME_SLOTS = [
     ("started", "Camera view as the person started speaking:"),
     ("ended", "Camera view as they finished speaking:"),
 ]
+
+# A poke is something happening with no words attached to it - the first being
+# the button held and released in silence. What it is worth saying is decided
+# here rather than by whoever noticed it, so the answer can change without
+# touching the ears. Fixed wording, not a model call: it is an instruction, and
+# it should come back the same way every time and without waiting on Gemini.
+POKE_REPLY = ("Did you mean to say something? Hold the button down while "
+              "speaking and release it when you're done.")
 
 _frames_lock = threading.Lock()
 _frames = {}
@@ -80,9 +87,20 @@ def take_frames():
 @app.route("/events/speech", methods=["POST"])
 @cross_origin(app)
 def speech_event():
-    """The ears reporting speech. Taking a photograph is our decision."""
+    """The ears reporting something. What to do about it is our decision -
+    taking a photograph when someone speaks, or answering a poke."""
     payload = request.get_json(silent=True) or {}
     event = payload.get("event")
+
+    if event == "poke":
+        # On a thread: speaking blocks until the audio has finished, and the
+        # publisher gives up after a few seconds, so answering inline would look
+        # to the ears like an event that never arrived.
+        answer = threading.Thread(target=speak, args=(POKE_REPLY,))
+        answer.daemon = True
+        answer.start()
+        return json.dumps({'error_message': 'success', 'event': event})
+
     slot = {"speech.started": "started", "speech.ended": "ended"}.get(event)
     if slot is None:
         return json.dumps({'error_message': 'ignored', 'event': event})
@@ -109,6 +127,8 @@ def index():
             grab_frame("ended")
         images = take_frames()
         logging.info("prompt received, %d camera frame(s) available", len(images))
+
+        think_gesture()
         result = google_generate_content(gary_prompt, images)
 
         head_flourish()
@@ -219,24 +239,46 @@ def speak(text):
         return
     return #jsonify(response.json()) #doing nothing with response
 
-# The mouth is no longer driven from here. The servo API opens and closes it
-# around the speech itself, which keeps the timing tight and means anything
-# that makes Gary talk gets a moving mouth. What is left here is the head
-# flourish: a small random movement as he starts talking, and a return to
-# centre when he stops.
+# The mouth is not driven from here - the servo API opens and closes it around
+# the speech itself, which keeps the timing tight and means anything that makes
+# Gary talk gets a moving mouth. What is left is asking for movement at the
+# right moments.
+#
+# The brain no longer knows a servo code, a percentage or a command format. It
+# names a gesture and the servo API decides what that means, easing it rather
+# than snapping. Everything these functions used to have to get right - the
+# space that made two commands out of one, the `+` that made a value relative,
+# the direction each axis travels - is now either the motion engine's problem
+# or written down in `servo_api/gestures.yaml`. The comments warning about
+# those traps went with them.
+#
+# What each gesture actually does is in that file, and can change without
+# touching this service at all.
+GESTURE_URL = os.environ.get("GARY_SERVO_URL",
+                             "http://localhost:5000") + "/api/motion/gesture"
+
+
+def play_gesture(name):
+    """Ask for a named gesture. Fire and forget: a movement that fails to start
+    is not a reason to hold up an answer, and the servo API logs it."""
+    async_request(GESTURE_URL, {"name": name})
+
+
 def head_flourish():
-    json_body = {"commands": ["HH:"+random.choice(["-","+"])+str(random.randint(5,15))+\
-                              " HV:"+random.choice(["-","+"])+str(random.randint(5,15))]}
-    async_arduino_command(json_body)
+    play_gesture("head_flourish")
+
+
+def think_gesture():
+    play_gesture("think")
 
 
 def head_recenter():
-    json_body = {"commands": ["HH:50 HV:50"]}
-    async_arduino_command(json_body)
+    play_gesture("head_recenter")
 
-#fire and forget the commands by using a separate thread
-def async_arduino_command(json_body):
-    threading.Thread(target=request_task, args=("http://localhost:5000/api/commands", json_body)).start()
+
+#fire and forget the request by using a separate thread
+def async_request(url, json_body):
+    threading.Thread(target=request_task, args=(url, json_body)).start()
 
 def request_task(url, json_body):
     try:

@@ -26,6 +26,7 @@ built without a camera run this code unchanged.
 
     speech.started   someone began speaking
     speech.ended     they stopped
+    poke             something happened that carries no words of its own
     POST <brain>/    the transcript
 """
 
@@ -68,6 +69,25 @@ def publish(event):
         thread = threading.Thread(target=send, args=(url,))
         thread.daemon = True
         thread.start()
+
+
+def send_prompt(text):
+    """Hand the transcript to the brain. Fire and forget, like publish().
+
+    The brain does not answer until Gary has finished speaking - Gemini, then
+    synthesis, then playback - so waiting for it kept the ears deaf for the
+    whole exchange, and a button press during that time did nothing until the
+    post returned. The reply was discarded anyway.
+    """
+    def send():
+        try:
+            requests.post(BRAIN_URL + "/", data={"gary_prompt": text})
+        except requests.exceptions.RequestException as e:
+            print("prompt not delivered to %s: %s" % (BRAIN_URL, e))
+
+    thread = threading.Thread(target=send, name="prompt")
+    thread.daemon = True
+    thread.start()
 
 
 def transcribe(model, filename):
@@ -141,14 +161,15 @@ def main():
             print(text)
 
             if not text:
-                print('nothing recognised, not sending')
+                # There is nothing to answer, but something did happen: the
+                # button was held and released with no words in it. Say so as a
+                # poke and let the brain decide whether that deserves a reply -
+                # this service reports what happened, it does not interpret it.
+                print('nothing recognized, poking the brain')
+                publish("poke")
                 continue
 
-            try:
-                requests.post(BRAIN_URL + "/", data={'gary_prompt': text})
-            except requests.exceptions.ConnectionError:
-                print("\n\033[93m Unable to reach the brain on %s \033[0m" % BRAIN_URL)
-                continue
+            send_prompt(text)
     finally:
         for trigger in triggers:
             trigger.close()

@@ -55,11 +55,15 @@ think:
 # When he stops speaking. Absolute rather than relative, because this is the
 # one movement whose whole purpose is arriving somewhere known. Slower than the
 # others: it is usually the longest way to travel.
+#
+# HV rests at 75, not at the midpoint. 50 is the middle of the servo's travel,
+# not the middle of anything useful - it points him down at the floor, well
+# below a standing person's face. Rest should be where people are.
 head_recenter:
   keyframes:
     - at: 0.8
       HH: "50"
-      HV: "50"
+      HV: "75"
 
 # --- answers -----------------------------------------------------------------
 
@@ -117,4 +121,4 @@ body_reset:
       RT: "0"
     - at: 2.0
       HH: "50"
-      HV: "50"
+      HV: "75"

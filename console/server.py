@@ -44,8 +44,11 @@ MOVE_TIMEOUT = 20
 # Reading or writing the volume is a small file operation, nothing more.
 VOLUME_TIMEOUT = 5
 
-# Absolute position both head servos treat as straight ahead.
-HEAD_CENTER = 50
+# Absolute positions the centre pad returns to. Pan really is the middle of its
+# travel; tilt is not - 50 points him at the floor, below a standing person's
+# face, so rest is 75. These match the head_recenter and body_reset gestures.
+HEAD_CENTER_PAN = 50
+HEAD_CENTER_TILT = 75
 # Refuse an implausible nudge. The Arduino clamps to its own servo limits, so
 # this is only here to catch a mistake in the page.
 HEAD_STEP_LIMIT = 50
@@ -252,7 +255,7 @@ def head():
     if payload.get("center"):
         path = "/api/motion/pose"
         duration = HEAD_CENTER_SECONDS
-        body = {"joints": {"HH": HEAD_CENTER, "HV": HEAD_CENTER},
+        body = {"joints": {"HH": HEAD_CENTER_PAN, "HV": HEAD_CENTER_TILT},
                 "duration": duration}
     else:
         joints = {}

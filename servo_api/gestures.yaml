@@ -76,10 +76,21 @@ head_flourish:
 # thumb/index interlock above is confirmed, and it is unknown whether any
 # other pair binds the same way. Watch this one closely the first time it
 # plays, same as any other first run of a new combination.
+#
+# RW (wrist) rotates fully outward to 0 for the duration - 0 is most open and
+# outward, 100 is most vertical with the palm facing most inward, which is
+# rest. Its only named point is at 1.0s rather than 0.0, deliberately: with
+# nothing named at 0.0 to pin it there, `_track` eases it in from wherever it
+# actually is instead of commanding "0" as the very first frame, which read
+# as a jerk rather than a movement. It simply stays at 0 rather than
+# returning before the gesture ends; `body_reset` brings it back afterward
+# the same way it already does for the hand and head.
 think:
   keyframes:
     - at: 0.5
       HV: "+5..10"
+    - at: 1.0
+      RW: "0"
     - at: 0.0
       RT: "100"
     - at: 4.1
@@ -193,8 +204,9 @@ shake:
 # finger is built. Verified by hand, one finger at a time.
 #
 # RW (wrist) has now been tried on its own and worked acceptably, so it joins
-# here alongside the head - "50" is a neutral guess, not a measured rest
-# point, until it's been watched landing there and corrected if needed.
+# here alongside the head. 100 is most vertical, mostly closed, palm facing
+# most inward - the actual rest position, not a guess; 0 is most open and
+# outward, toward the opposite end of travel.
 #
 # RB is still deliberately absent. The bicep has never been driven by the
 # engine, and this gesture would move it unattended at the end of every
@@ -210,4 +222,4 @@ body_reset:
     - at: 2.0
       HH: "50"
       HV: "75"
-      RW: "50"
+      RW: "100"

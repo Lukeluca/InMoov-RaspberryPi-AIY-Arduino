@@ -162,6 +162,17 @@ class Camera:
             raise CameraError("jpeg encoding failed")
         return buf.tobytes()
 
+    def read(self):
+        """One raw frame, for a consumer inside this process.
+
+        `capture()` encodes to JPEG, which costs about 59ms - more than a face
+        detection - so anything running in here works from the array instead.
+        """
+        with self._lock:
+            frame = self._read_frame()
+            self._frames_served += 1
+            return frame
+
     def capture(self):
         """Return one frame as JPEG bytes."""
         with self._lock:

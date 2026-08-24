@@ -14,6 +14,13 @@ Environment=PYTHONUNBUFFERED=1
 # Release the camera after 30s idle, so the LED goes dark, the device is free
 # for raspistill, and no stale buffer is waiting for the next request.
 Environment=GARY_CAMERA_IDLE_TIMEOUT=30
+# Where a face lands in the frame when the head is genuinely aimed at it. The
+# camera is not on the head's centre line on most builds, so tracking that
+# centres a face in the picture leaves the head pointing past people. Measure
+# your own: aim the head somewhere, stand on that line, and read `last_raw`
+# from GET :5002/tracking. Left and up are negative. Unset means dead centre.
+#Environment=GARY_TARGET_DX=0.0
+#Environment=GARY_TARGET_DY=0.0
 ExecStart=/usr/bin/python3 /home/pi/gary/vision/server.py
 Restart=on-failure
 RestartSec=5

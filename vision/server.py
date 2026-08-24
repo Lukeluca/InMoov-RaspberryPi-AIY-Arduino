@@ -8,10 +8,17 @@ process can hold the device.
     GET  /frame.jpg           one frame, as an image
     GET  /frames?count=3      several frames, base64, for a multimodal prompt
     POST /camera/release      drop the camera now, e.g. to free it for raspistill
+    POST /tracking/start      begin, or extend, a face-tracking session
+    POST /tracking/stop       end it now
+    GET  /tracking            session and detector state
 
-Head tracking is not here yet. When it arrives it takes a camera lease rather
-than opening the device separately, and it will send servo commands to the
-servo API over HTTP - never by opening the serial port, which servo_api owns.
+Tracking runs in here because it needs raw frames: going out through
+/frame.jpg would cost a JPEG encode and decode, about 59ms, which is more than
+the detection itself. It takes a camera lease rather than opening the device
+separately, and it sends offsets to the servo API over HTTP - never by opening
+the serial port, which servo_api owns.
+
+Nothing starts a session by itself. Something has to ask.
 """
 
 import base64
@@ -21,11 +28,15 @@ from flask import Flask, Response, request
 from flask_cors import CORS, cross_origin
 
 from camera import Camera, CameraError
+from tracker import Tracker
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"Access-Control-Allow-Origin": "*"}})
 
 camera = Camera()
+tracker = Tracker(camera)
+if not tracker.available():
+    print("tracking unavailable: %s" % tracker.state()["problem"])
 
 MAX_FRAMES = 10
 
@@ -96,6 +107,41 @@ def release():
         "released": released,
         "camera": camera.status(),
     }), mimetype="application/json")
+
+
+@app.route("/tracking/start", methods=["POST"])
+@cross_origin(app)
+def tracking_start():
+    """Begin a session, or extend the one already running.
+
+    Extending rather than restarting is what makes a follow-up question buy
+    another 45 seconds without interrupting the tracking already in progress.
+    """
+    started, note = tracker.start()
+    if not started:
+        return _error("tracking unavailable: %s" % note, 503)
+    return Response(json.dumps({"error_message": "success", "note": note,
+                                "tracking": tracker.state()}),
+                    mimetype="application/json")
+
+
+@app.route("/tracking/stop", methods=["POST"])
+@cross_origin(app)
+def tracking_stop():
+    stopped = tracker.stop("asked to stop")
+    return Response(json.dumps({"error_message": "success",
+                                "was_running": stopped,
+                                "tracking": tracker.state()}),
+                    mimetype="application/json")
+
+
+@app.route("/tracking", methods=["GET"])
+@cross_origin(app)
+def tracking_state():
+    return Response(json.dumps({"error_message": "success",
+                                "tracking": tracker.state(),
+                                "camera": camera.status()}),
+                    mimetype="application/json")
 
 
 if __name__ == "__main__":

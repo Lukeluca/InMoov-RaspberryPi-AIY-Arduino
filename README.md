@@ -351,3 +351,8 @@ archive/     superseded earlier versions, not in use
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+One bundled exception: `vision/haarcascade_frontalface_default.xml` is OpenCV's
+frontal-face cascade, under the Intel License Agreement whose text is in the
+file's own header. It is vendored because OpenCV 3.2 ships no cascade data, so
+there is nothing on the system to load — see [Head tracking](#head-tracking).

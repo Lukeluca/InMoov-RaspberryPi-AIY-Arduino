@@ -211,6 +211,30 @@ shake:
     - at: 1.15
       HH: "+0"
 
+# --- hand poses ---------------------------------------------------------------
+
+# Thumb and index extended, the other three closed, wrist turned fully
+# inward. Every joint gets one keyframe at the same time, which is enough to
+# ease each in from wherever it actually is - there is no keyframe named at
+# 0.0, so nothing snaps.
+#
+# No ordering needed between the thumb and index here, unlike think and
+# body_reset: the "thumb can only close once the index is closed" interlock
+# governs CLOSING, and both of these are opening.
+#
+# 100 on RW is "turned inward all the way" - the same value rest already
+# uses, so from a resting hand this only moves the fingers; from anywhere
+# else the wrist eases back to it over the same second.
+point:
+  keyframes:
+    - at: 1.0
+      RT: "100"
+      RI: "100"
+      RM: "0"
+      RR: "0"
+      RP: "0"
+      RW: "100"
+
 # --- returning to rest -------------------------------------------------------
 
 # What an interaction ends with. A conversation can leave more than the head

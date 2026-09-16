@@ -23,6 +23,16 @@ WorkingDirectory=/home/pi/gary/brain
 # so this wins.
 Environment=PYTHONUNBUFFERED=1
 Environment=FLASK_ENV=production
+# Gemini normally answers in about half a second, but this Pi periodically
+# hits windows where a call takes 14-35s - the connection is fine and the
+# reply is merely late, which is why it shows up as "read operation timed
+# out" rather than anything about reachability. Those calls still SUCCEED,
+# so the old budget of 12s twice spent 24 seconds and then apologized where
+# patience would have answered. One patient attempt instead: roughly the same
+# worst case, minus the apology. It costs nothing in the normal case, because
+# a healthy call returns long before either number matters.
+Environment=GARY_GEMINI_TIMEOUT=30
+Environment=GARY_GEMINI_ATTEMPTS=1
 ExecStart=/usr/bin/flask run --port 5001 --no-reload
 Restart=on-failure
 RestartSec=5

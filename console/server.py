@@ -29,6 +29,7 @@ import re
 
 import requests
 from flask import Flask, Response, render_template, request
+from werkzeug.serving import WSGIRequestHandler
 
 SERVO_URL = os.environ.get("GARY_SERVO_URL", "http://localhost:5000")
 BRAIN_URL = os.environ.get("GARY_BRAIN_URL", "http://localhost:5001")
@@ -482,6 +483,17 @@ def status():
                   "camera": camera})
 
 
+# Every connection gets its own thread, and by default no socket timeout, so a
+# client that vanishes without closing it (a dropped VPN, a sleeping laptop)
+# leaves that thread blocked in recv() for good - the ears reached 323 threads
+# that way, and this service wedged the same way. A browser tab left open here
+# is exactly the client that strands them: it polls a frame every two seconds
+# and the service list every ten, over whatever the network does in between.
+class IdleTimeoutHandler(WSGIRequestHandler):
+    timeout = 30
+
+
 if __name__ == "__main__":
     print("\n Gary's console is up on :5004 \n")
-    app.run(debug=False, host="0.0.0.0", port=5004, threaded=True)
+    app.run(debug=False, host="0.0.0.0", port=5004, threaded=True,
+            request_handler=IdleTimeoutHandler)

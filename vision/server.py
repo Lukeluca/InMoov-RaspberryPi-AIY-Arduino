@@ -26,6 +26,7 @@ import json
 
 from flask import Flask, Response, request
 from flask_cors import CORS, cross_origin
+from werkzeug.serving import WSGIRequestHandler
 
 from camera import Camera, CameraError
 from tracker import Tracker
@@ -144,8 +145,18 @@ def tracking_state():
                     mimetype="application/json")
 
 
+# Every connection gets its own thread, and by default no socket timeout, so a
+# client that vanishes without closing it (a dropped VPN, a sleeping laptop)
+# leaves that thread blocked in recv() for good - the ears reached 323 threads
+# that way. This reaps them. It matters most here: this is the most polled
+# service of the five, since the console fetches a frame every two seconds.
+class IdleTimeoutHandler(WSGIRequestHandler):
+    timeout = 30
+
+
 if __name__ == "__main__":
     print("\n Gary is watching... \n")
     # debug=False for the same reason as the servo API: the reloader would run
     # this module twice and both copies would fight over the camera.
-    app.run(debug=False, host="0.0.0.0", port=5002)
+    app.run(debug=False, host="0.0.0.0", port=5002,
+            request_handler=IdleTimeoutHandler)

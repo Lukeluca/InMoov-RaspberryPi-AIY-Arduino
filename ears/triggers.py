@@ -125,7 +125,19 @@ class HttpTrigger(Trigger):
         self.port = int(os.environ.get("GARY_EARS_PORT", 5003))
 
     def start(self):
+        # Imported here rather than at the top so a robot that does not enable
+        # this trigger never needs Flask installed at all.
         from flask import Flask, Response
+        from werkzeug.serving import WSGIRequestHandler
+
+        # Every connection gets its own thread, and by default no socket
+        # timeout, so a client that vanishes without closing it (a dropped
+        # VPN, a sleeping laptop) leaves that thread blocked in recv() for
+        # good. This service reached 323 threads that way. Reaping them costs
+        # nothing: the timeout is on socket reads, not on how long a handler
+        # may take, and the routes here return immediately anyway.
+        class IdleTimeoutHandler(WSGIRequestHandler):
+            timeout = 30
 
         app = Flask("gary-ears")
 
@@ -149,7 +161,8 @@ class HttpTrigger(Trigger):
 
         def serve():
             app.run(host="0.0.0.0", port=self.port, debug=False,
-                    use_reloader=False, threaded=True)
+                    use_reloader=False, threaded=True,
+                    request_handler=IdleTimeoutHandler)
 
         thread = threading.Thread(target=serve, name="ears-http")
         thread.daemon = True

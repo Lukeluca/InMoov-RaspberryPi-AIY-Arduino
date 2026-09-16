@@ -1,6 +1,7 @@
 from gary_api import GaryAPI
 from flask import Flask, request, Response
 from flask_cors import CORS, cross_origin
+from werkzeug.serving import WSGIRequestHandler
 from config import base_conf
 import json
 import os
@@ -467,6 +468,15 @@ def motion_resume():
     return json.dumps({'error_message': 'success', 'motion': engine.state()})
 
 
+# Every connection gets its own thread, and by default no socket timeout, so a
+# client that vanishes without closing it (a dropped VPN, a sleeping laptop)
+# leaves that thread blocked in recv() for good - the ears reached 323 threads
+# that way. This reaps them. Slow requests are unaffected: the timeout is on
+# socket reads, not on how long a handler may take.
+class IdleTimeoutHandler(WSGIRequestHandler):
+    timeout = 30
+
+
 if __name__ == "__main__":
     print("\n Gary is listening... \n")
     gary.set_serial(base_conf["usb_port"])
@@ -478,5 +488,6 @@ if __name__ == "__main__":
     # open /dev/ttyUSB0 in both processes, which makes reads race and fail with
     # "multiple access on port". It also keeps the Werkzeug debugger console off
     # a socket bound to 0.0.0.0.
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    app.run(debug=False, host="0.0.0.0", port=5000,
+            request_handler=IdleTimeoutHandler)
     

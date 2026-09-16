@@ -51,6 +51,20 @@ SUBSCRIBERS = [u.strip() for u in os.environ.get(
     "GARY_EVENT_SUBSCRIBERS", "http://localhost:5001/events/speech").split(",")
     if u.strip()]
 EVENT_TIMEOUT = 3
+# Far longer than EVENT_TIMEOUT, and deliberately so: an event is answered the
+# moment it arrives, but the brain sends nothing back until the whole exchange
+# is over - Gemini, then synthesis, then playback. A read timeout is the gap
+# between bytes, not the total, so anything shorter than a full spoken reply
+# would fire on every ordinary question and print a delivery error for an
+# exchange that worked perfectly. The console uses the same 60 for the same
+# reason.
+#
+# It is bounded at all because an unbounded `requests` call has no timeout by
+# default, and a brain that stalls mid-request pins this thread in recv()
+# forever - one leaked thread per exchange, never reclaimed. Timing out is
+# safe: the reply is discarded anyway, and giving up on this end does not stop
+# the brain's own handler, so it cannot cut Gary off mid-sentence.
+PROMPT_TIMEOUT = 60
 
 
 def publish(event):
@@ -81,7 +95,8 @@ def send_prompt(text):
     """
     def send():
         try:
-            requests.post(BRAIN_URL + "/", data={"gary_prompt": text})
+            requests.post(BRAIN_URL + "/", data={"gary_prompt": text},
+                          timeout=PROMPT_TIMEOUT)
         except requests.exceptions.RequestException as e:
             print("prompt not delivered to %s: %s" % (BRAIN_URL, e))
 

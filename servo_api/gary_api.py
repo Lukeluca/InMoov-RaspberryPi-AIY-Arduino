@@ -88,10 +88,20 @@ class Arduino:
     # reply, or the banner leaks into the first real command's response.
     BOOT_TIMEOUT = 2.0
 
+    # pyserial's `timeout` covers reads only; without this, a write blocks
+    # forever. A whole line is at most 64 bytes, about 6ms of wire time at
+    # 115200, so a write still unfinished after two seconds is not a slow one -
+    # it is a firmware that has stopped draining its input. It matters more
+    # than the size of the number suggests: the write happens while holding the
+    # class-level lock, so an unbounded one wedges every command queued behind
+    # it, not just its own.
+    WRITE_TIMEOUT = 2.0
+
     def __init__(self, ser):
         self.baud_rate = 115200
         self.ser = serial.Serial(ser, self.baud_rate, bytesize=8,
-                                 timeout=self.BOOT_TIMEOUT)
+                                 timeout=self.BOOT_TIMEOUT,
+                                 write_timeout=self.WRITE_TIMEOUT)
 
         self.ser.readlines()
         # Banner drained; from here on a command should not cost two seconds.
@@ -113,9 +123,16 @@ class Arduino:
         # a previous call that gave up on a wedged firmware, say - and would
         # otherwise be counted as this batch's replies.
         self.ser.reset_input_buffer()
-        self.ser.write(formatted_commands.encode("ASCII"))
 
         res = Request()
+        try:
+            self.ser.write(formatted_commands.encode("ASCII"))
+        except serial.SerialTimeoutException:
+            # The firmware stopped accepting input. From the caller's side that
+            # is the same situation as a wedged read - the command did not
+            # happen - so it gets the same answer rather than escaping as a 500.
+            return res.send_error(112)
+
         error_code = None
         echoes = 0
 

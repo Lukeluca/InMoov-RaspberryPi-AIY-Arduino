@@ -76,6 +76,17 @@ PIPER_VOICE = os.environ.get("GARY_PIPER_VOICE",
 LENGTH_SCALE = os.environ.get("GARY_PIPER_LENGTH_SCALE", "0.75")
 ALSA_DEVICE = os.environ.get("GARY_ALSA_DEVICE", "default")
 
+# Bounds on the two things that shell out. Both are generous: playback
+# legitimately takes as long as the audio is, and synthesis grows with the
+# length of the text. They are here to catch a wedge, not to pace anything -
+# a one-shot Piper run measured ~3.5s and Gary's replies are a sentence.
+#
+# The playback one is not hypothetical: this robot's voiceHAT has a history of
+# "Device or resource busy", and aplay against a wedged device would otherwise
+# block for good.
+PLAY_TIMEOUT = 60
+SYNTH_TIMEOUT = 60
+
 # Playback gain, 0.0 to 1.0. Applied to the samples, not the system mixer. Only
 # the default: what the settings file holds wins, see volume().
 DEFAULT_VOLUME = float(os.environ.get("GARY_TTS_VOLUME", "0.35"))
@@ -277,7 +288,8 @@ def _synthesize_piper_once(text):
         [PIPER_BIN, "--model", PIPER_VOICE,
          "--length_scale", LENGTH_SCALE, "--output_file", handle.name],
         input=text.encode("utf-8"),
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+        timeout=SYNTH_TIMEOUT)
     return handle.name
 
 
@@ -293,7 +305,8 @@ def _synthesize_pico(text):
               "%s</speed></pitch></volume>" % text)
     subprocess.check_call(
         ["pico2wave", "--wave", handle.name, "--lang", "en-GB", markup],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        timeout=SYNTH_TIMEOUT)
     return handle.name
 
 
@@ -341,7 +354,14 @@ def play(path):
         ["aplay", "-q", "-D", ALSA_DEVICE, "-f", "S16_LE",
          "-r", str(rate), "-c", str(channels), "-"],
         stdin=subprocess.PIPE)
-    player.communicate(frames)
+    try:
+        player.communicate(frames, timeout=PLAY_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # Kill it and reap it, or the process is left behind still holding the
+        # audio device - which would make the next utterance fail too.
+        player.kill()
+        player.communicate()
+        raise RuntimeError("aplay did not finish within %ds" % PLAY_TIMEOUT)
     if player.returncode != 0:
         raise RuntimeError("aplay exited %d" % player.returncode)
 

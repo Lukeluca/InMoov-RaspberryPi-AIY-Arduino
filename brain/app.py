@@ -13,6 +13,7 @@ import threading
 
 from flask import Flask, redirect, render_template, request, url_for
 from flask_cors import CORS, cross_origin
+from werkzeug.serving import WSGIRequestHandler
 from aiy.board import Board, Led
 
 
@@ -31,6 +32,22 @@ FRAME_MAX_AGE = 60
 # thinking. Bounded so one bad connection cannot hold Gary up indefinitely.
 GEMINI_TIMEOUT = float(os.environ.get("GARY_GEMINI_TIMEOUT", "12"))
 GEMINI_ATTEMPTS = int(os.environ.get("GARY_GEMINI_ATTEMPTS", "2"))
+
+# Speaking blocks until the audio has finished playing, so this has to cover a
+# whole spoken reply rather than a round trip - the console uses the same 60
+# against the same endpoint.
+SPEAK_TIMEOUT = 60
+# A backstop for the fire-and-forget posts, not a tuned per-endpoint value.
+# The slowest legitimate one is a tracking start that has to open a cold
+# camera and wait out its 1.5s exposure warmup; a gesture returns as soon as
+# the movement STARTS, so it is quick. Both are far inside this.
+#
+# It exists at all because `requests` has no default timeout: a servo API or
+# vision that accepts the connection and then stalls would pin the thread in
+# recv() forever, and every gesture play starts one of these. That is the leak
+# that took the ears to 323 threads, and gestures fire more often than
+# transcripts do.
+ASYNC_TIMEOUT = 20
 
 # The ears report that someone started and stopped speaking. They know nothing
 # about cameras - this service decides those moments are worth photographing,
@@ -247,9 +264,13 @@ Answer in 15 words or less."
 def speak(text):
     json_body = {"text": text}
     try:
-        response = requests.post("http://localhost:5000/api/voice/text2speech", json=json_body)
-    except requests.exceptions.ConnectionError as e:
-        print("\n\033[93mUnable to reach text2speech on port 5000 \033[0m") 
+        response = requests.post("http://localhost:5000/api/voice/text2speech",
+                                 json=json_body, timeout=SPEAK_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        # RequestException rather than ConnectionError: with a timeout set, a
+        # servo API that accepts and then stalls raises Timeout, which is not a
+        # ConnectionError and would otherwise escape as a traceback.
+        print("\n\033[93mUnable to reach text2speech on port 5000: %s\033[0m" % e)
         return
     return #jsonify(response.json()) #doing nothing with response
 
@@ -333,14 +354,37 @@ def async_request(url, json_body):
 
 def request_task(url, json_body):
     try:
-        requests.post(url, json=json_body)
-    except requests.exceptions.ConnectionError as e:
-        print("\n\033[93mUnable to reach "+url+" \033[0m") 
+        requests.post(url, json=json_body, timeout=ASYNC_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        # RequestException rather than ConnectionError: with a timeout set, a
+        # service that accepts and then stalls raises Timeout, which is not a
+        # ConnectionError. Uncaught, it would kill this thread with a traceback
+        # instead of the one-line warning this was always meant to print.
+        print("\n\033[93mUnable to reach "+url+": %s\033[0m" % e)
         return
     return
 
 #def main():
 
+# Every connection gets its own thread, and by default no socket timeout, so a
+# client that vanishes without closing it (a dropped VPN, a sleeping laptop)
+# leaves that thread blocked in recv() for good - the ears reached 323 threads
+# that way. This reaps them. Slow requests are unaffected: the timeout is on
+# socket reads, not on how long a handler may take, which matters here because
+# this service holds a request open for a whole exchange.
+#
+# NOTE this is currently inert: the systemd unit starts this service with
+# `flask run`, which never executes the __main__ block below, so the handler
+# is never installed. It is kept for anyone running app.py directly, and
+# because the leak it guards against cannot reach this service anyway - the
+# brain listens on 127.0.0.1 only, so its clients are the other services on
+# this Pi rather than browsers on a network that can drop. The four services
+# that DO run their .py directly are the ones actually protected.
+class IdleTimeoutHandler(WSGIRequestHandler):
+    timeout = 30
+
+
 if __name__ == "__main__":
     #main()
-    app.run(debug=False, host="0.0.0.0", port=5001)
+    app.run(debug=False, host="0.0.0.0", port=5001,
+            request_handler=IdleTimeoutHandler)

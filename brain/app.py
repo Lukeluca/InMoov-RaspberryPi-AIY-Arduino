@@ -23,6 +23,59 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Create a 5 minute cache for the conversations
 cache = cachetools.TTLCache(maxsize=10, ttl=300)
 
+# Who Gary thinks he is lives in a text file, not in this module. It is the
+# first thing anyone adapting this robot will want to change and the last
+# thing they should need Python for - a different InMoov, in a different
+# office, built by somebody else, is a file edit rather than a patch.
+#
+# Plain text rather than YAML, deliberately: gestures.yaml earns its format
+# because keyframes are structured data, while this is prose, and wrapping
+# prose in YAML buys only quoting rules and a parser. The file is literally
+# what Gary is told about himself.
+SYSTEM_PROMPT_FILE = os.environ.get(
+    "GARY_SYSTEM_PROMPT_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_prompt.txt"))
+
+# Enough to keep him answering, and short, if the file is missing. He will not
+# know his own history, which is why the warning below says so plainly rather
+# than letting a personality-less Gary look like a model problem.
+DEFAULT_SYSTEM_PROMPT = ("Respond as Gary the Robot. No robot sounds. "
+                         "Answer in 15 words or less.")
+
+_prompt_problem = None
+
+
+def system_prompt():
+    """The system instruction, read fresh each time.
+
+    Re-read per question rather than cached at startup, the same way the volume
+    setting is read per utterance: editing the prompt is the whole point of
+    having it in a file, and iterating on it should not mean restarting the
+    service between attempts. It is under a kilobyte, and questions arrive
+    seconds apart at best.
+    """
+    global _prompt_problem
+    try:
+        with open(SYSTEM_PROMPT_FILE) as handle:
+            text = handle.read().strip()
+        if not text:
+            raise ValueError("the file is empty")
+        if _prompt_problem is not None:
+            logging.info("system prompt loaded again from %s", SYSTEM_PROMPT_FILE)
+            _prompt_problem = None
+        return text
+    except Exception as e:
+        # Logged only when the problem CHANGES, since this runs per question
+        # and an unreadable file would otherwise fill the journal.
+        if str(e) != _prompt_problem:
+            logging.warning("cannot read %s (%s) - falling back to the built-in "
+                            "prompt, so Gary will not know his own history",
+                            SYSTEM_PROMPT_FILE, e)
+            _prompt_problem = str(e)
+        return DEFAULT_SYSTEM_PROMPT
+
+
+
 VISION_URL = os.environ.get("GARY_VISION_URL", "http://localhost:5002")
 FRAME_TIMEOUT = 8
 # A stashed frame older than this belongs to an abandoned exchange.
@@ -168,7 +221,8 @@ def index():
         
         #cache for future discussions, using the prompt as the key, and the result as the value
         cache[gary_prompt] = result
-        
+
+
         #for POST request, return a JSON result
         return json.dumps({'error_message': 'success', 'text': result }) #redirect(url_for("index", result=result))
 
@@ -188,6 +242,7 @@ def google_generate_chat_content():
             "parts": [{ "text": value }]
             })
     return json_data
+
 
 def user_parts(prompt, images=None):
     """Build the user turn: the spoken text, then any camera frames.
@@ -213,18 +268,7 @@ def google_generate_content(prompt, images=None):
     
     json_body = {
         "system_instruction": {
-            "parts":
-            { "text": "Respond as Gary the Robot. No robot sounds. \
-Gary is a 3D printed robot in the Bottle Rocket Studios office in Addison, Texas. \
-He gets moved around and does not know exactly where he is; work it out from your \
-photographs if someone asks. \
-Built in 2016 by Luke Wallace at the annual Rocket Science hackathon, when Calvin Carter \
-was CEO and President. Matt Smith became President in November 2025. Luke has worked on \
-him every hackathon since; he began as one arm and now has a head and waist. \
-You may be given photographs from your camera. Use them only when asked about where you \
-are or what you can see. Never mention your surroundings otherwise. \
-Answer in 15 words or less."
-              }
+            "parts": { "text": system_prompt() }
             },
         "contents": [ json_chat, { "role":"user", "parts": user_parts(prompt, images) }] }
     

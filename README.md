@@ -363,9 +363,23 @@ an alias rather than a pinned version, deliberately: this project previously bro
 when `gemini-1.5-flash` was retired, and pinning is not a safe harbour, since
 retired models can be closed to new users entirely.
 
-Gary's personality lives in the `system_instruction` string in
-`brain/app.py:google_generate_content`. Change it there to give your robot its own
-character.
+Gary's personality lives in **`brain/system_prompt.txt`** — plain text, sent as the
+model's system instruction. It is the whole of what Gary is told about himself: who
+he is, where he lives, who built him, when to use his camera, and how long his
+answers may be. Edit that file to give your robot its own character; no Python
+involved, which is the point, since a different InMoov in a different office is the
+first thing anyone adapting this will want to change.
+
+It is re-read for every question, so an edit takes effect on the next thing anyone
+asks with nothing restarted — the same way the volume setting is re-read per
+utterance. Override the location with `GARY_SYSTEM_PROMPT_FILE`. If the file is
+missing or empty the brain logs a warning and falls back to a built-in one-line
+prompt, so a robot with no persona file still answers; it just will not know its
+own history.
+
+Keep answers short in that file. Output length is the one thing that really governs
+how the robot feels: the model generates in about half a second either way, but
+every word gets spoken aloud, so the reply length sets the length of the wait.
 
 ## Known limitations
 

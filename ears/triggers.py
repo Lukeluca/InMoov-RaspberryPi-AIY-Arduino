@@ -51,28 +51,33 @@ class AiyButtonTrigger(Trigger):
         from aiy.board import Board, Led
         self._led_cls = Led
         self._board = Board()
-        self._closed = False
 
     def start(self):
-        thread = threading.Thread(target=self._watch, name="aiy-button")
-        thread.daemon = True
-        thread.start()
+        # Callbacks, not wait_for_press(timeout=...) in a loop. Each call to
+        # wait_for_press puts a threading.Event on a queue that is only drained
+        # when the button is genuinely pressed, so a timeout abandons its Event
+        # there forever. Polling twice a second orphaned ~170,000 Events a day:
+        # measured on the robot, 133MB grew to 691MB in five days with nobody
+        # touching him. Worse, the eventual press had to walk every one of them
+        # - the drain calls .set() on each before the press registers - which is
+        # what made the button appear hung after a few days.
+        #
+        # These fire from the board's own debounce thread, which runs either
+        # way, so this needs no thread of its own and nothing to shut down.
+        self._board.button.when_pressed = self._pressed
+        self._board.button.when_released = self._released
 
-    def _watch(self):
-        while not self._closed:
-            # A timeout so close() is noticed rather than blocking forever.
-            if not self._board.button.wait_for_press(timeout=0.5):
-                continue
-            self.ended.clear()
-            self.started.set()
-            self._board.button.wait_for_release()
-            self.ended.set()
+    def _pressed(self):
+        self.ended.clear()
+        self.started.set()
+
+    def _released(self):
+        self.ended.set()
 
     def indicate(self, listening):
         self._board.led.state = self._led_cls.ON if listening else self._led_cls.OFF
 
     def close(self):
-        self._closed = True
         try:
             self._board.close()
         except Exception:

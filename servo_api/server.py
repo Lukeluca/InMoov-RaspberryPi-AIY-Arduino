@@ -65,7 +65,6 @@ def home():
            " });"\
            "}"\
            "</script>" \
-           "<p><a href='/api/video/stream'>Video Stream</a></p>" \
            "</BODY></HTML>"
 
 
@@ -160,27 +159,13 @@ def voice_volume():
     return json.dumps({'error_message': 'success', 'volume': tts.volume()})
 
 
-@cross_origin(app)
-@app.route("/api/video", methods=["GET"])
-def capture():
-    if request.method == "GET":
-        frame_path = gary.sight.capture()
-        return json.dumps({'error_message': 'success', 'file_path': frame_path })
+# The camera is not served from here. /api/video and /api/video/stream used to
+# be, backed by a Sight class that opened its own VideoCapture and a second
+# connection to the serial port; both had been returning 500 for a long time,
+# since that class was commented out from under them. The camera belongs to
+# vision/ now, which is also the only place it can belong - one process holds
+# /dev/video0, so a capture opened here would fight the vision service.
 
-        
-@cross_origin(app)
-@app.route("/api/video/stream", methods=["GET", "POST"])
-def capture_stream():
-    print('STREAMING')
-    mimetype = 'multipart/x-mixed-replace; boundary=frame'
-    
-    
-    if request.method == "GET":
-        return Response(gary.sight.streamVideo(params={"move_to_face" : True, "detect_faces": True}), mimetype=mimetype)
-    
-    if request.method == "POST":
-        return Response(gary.sight.streamVideo(params={"move_to_face" : True, "detect_faces": True, **request.get_json()}), mimetype=mimetype)
-    
 
 @cross_origin(app)
 @app.route("/api/commands", methods=["GET", "POST"])

@@ -1,10 +1,4 @@
 import serial #pip3 install pyserial
-from serial import tools as serial_tools
-import subprocess
-import datetime
-import json
-#import cv2
-import asyncio
 import threading
 
 import aiy.voice.tts
@@ -56,7 +50,7 @@ class Arduino:
     # readline() swallows the bytes the other is waiting for, and pyserial
     # raises "device reports readiness to read but returned no data". The lock
     # is on the class rather than the instance so it still holds if a second
-    # Arduino is constructed, as the Sight class does.
+    # Arduino is ever constructed.
     _serial_lock = threading.Lock()
 
     # The firmware prints exactly one "C:" echo per newline it receives. That
@@ -260,10 +254,6 @@ class GaryAPI:
         return self
     
     @property
-    def sight(self):
-        return Sight()
-    
-    @property
     def speech(self):
         return Speech()
 
@@ -277,120 +267,3 @@ class Speech:
         # Which engine, and why file rather than streaming, is all in tts.py.
         tts.speak(text)
 
-'''
-class Sight:
-
-    def __init__(self):
-        self.vc = cv2.VideoCapture(-1)
-        self.frame_path = './static/images/frame.jpg'
-        self.font = cv2.FONT_HERSHEY_SIMPLEX
-        self.faceCascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        self.ard = Arduino("/dev/ttyUSB0")
-    
-    def read_cam(self):
-        if self.vc.isOpened():
-            ret, frame = self.vc.read()
-            return ret, frame
-    
-    def write_frame(self, frame):
-        cv2.imwrite(self.frame_path, frame)
-    
-    
-    def release(self):
-        self.vc.release()
-        #self.vc.destroyAllWindows()
-
-    def capture(self):
-        ret, frame = self.read_cam()
-        if ret == False:
-            return json.dumps(Request().send_error(111))
-        
-        self.write_frame(frame)
-        self.release()
-        
-        return self.frame_path
-        
-    def streamVideo(self, params = {}):
-        while True:
-            try:
-                #print("getting frame")
-                ret, frame = self.read_cam()
-            except Exception as e:
-                self.release()
-                return json.dumps(Request().send_error(111))
-
-            if ret == False:
-                return json.dumps(Request().send_error(111))
-            
-            cv2.putText(frame, 'SCANNING... - ' +  str(datetime.datetime.now()) , (0,30), self.font, 1, (200, 255, 155))
-            self.write_frame(frame)
-
-            if params.get('detect_faces', False):
-                self.detect_faces(frame, move_to_face=params.get('move_to_face', False))
-           
-            yield (b'--frame\r\n' 
-              b'Content-Type: image/jpeg\r\n\r\n' + open(self.frame_path, 'rb').read() + b'\r\n')
-
-    
-    def detect_faces(self, frame, move_to_face = True):
-            # Getting corners around the face
-            # 1.3 = scale factor, 5 = minimum neighbor can be detected
-            faces = self.faceCascade.detectMultiScale(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), 1.3, 5)
-            moved = False
-            for (x, y, w, h) in faces:
-
-                img = cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 3)
-                cv2.putText(img, 'HUMAN DETECTED' , (x,y), self.font, 0.6, (200, 255, 155))
-                self.write_frame(frame)
-                    
-                if w > 0 and moved == False:
-                    if move_to_face == True:
-                        self.move_head_to_position(x, y)
-                        moved = True
-    
-    def move_head_to_position(self, x, y):
-        HEAD_TWIST = "HH"
-        HEAD_VERTICAL = "HV"
-        
-        #Dead Zone (where Gary won't reposition)
-        x_min = 270
-        x_max = 320
-        y_min = 150
-        y_max = 225
-        
-        if (x > x_min and x < x_max and y > y_min and y < y_max): return
-        #don't reposition between 200<x<400 and 125<y<250
-        
-        #print("found face at x:" + str(x) + " y:" + str(y))
-        
-        x_servo_pos = None
-        y_servo_pos = None
-        if (x > x_max):
-            x_servo_pos = -8
-        if (x < x_min):
-            x_servo_pos = 8
-            HEAD_TWIST = "HH+"
-        if (y > y_max):
-            y_servo_pos = -8 #y starts at top, tilt head down
-        if (y < y_min):
-            y_servo_pos = +8
-            HEAD_VERTICAL = "HV+"
-
-        
-        if (x_servo_pos is not None and y_servo_pos is not None):
-            #print("adjust both")
-            format_r = Request().format_commands([f"{HEAD_TWIST}{x_servo_pos}", f"{HEAD_VERTICAL}{y_servo_pos}"])
-        else:
-            if (x_servo_pos is not None):
-                #print("adjust horizontal")
-                format_r = Request().format_commands([f"{HEAD_TWIST}{x_servo_pos}"])
-            else:
-                #print ("adjust vertical")
-                format_r = Request().format_commands([f"{HEAD_VERTICAL}{y_servo_pos}"])
- 
-        #print("starting command")
-        #self.release()
-        self.ard.send_commands(format_r)
-        #self.vc = cv2.VideoCapture(-1)
-        #print("command complete")
-    '''

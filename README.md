@@ -385,17 +385,6 @@ every word gets spoken aloud, so the reply length sets the length of the wait.
 
 These are real and worth understanding before you invest time:
 
-- **`/api/video` and `/api/video/stream` always return 500.** They are the last
-  of the original camera attempt: the `Sight` class they call sits inside a
-  string literal in `servo_api/gary_api.py`, so the name does not exist and the
-  `sight` property raises `NameError` on every request. The servo API's own
-  index page still links to one of them. Nothing else references either route.
-  [Head tracking](#head-tracking) replaced all of it properly in `vision/`,
-  which is where it has to live — only one process can hold `/dev/video0`, so a
-  second `VideoCapture` inside `servo_api` would fight the vision service even
-  if the code ran. The class, the property, both routes and the index link are
-  all deletable together; deleting the class alone would leave the callers
-  dangling.
 - **Requires the AIY Voice HAT.** The button, LED and text-to-speech all come from
   `aiy.*`. Without that discontinued board the code fails at import. Making this
   portable means abstracting a trigger source and a TTS backend.

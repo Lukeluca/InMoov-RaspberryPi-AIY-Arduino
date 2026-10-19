@@ -154,8 +154,8 @@ camera that is always recording. Measured on a Pi 4 with the v1 camera:
 | Draining stale buffers after an idle gap | negligible |
 
 That 40x gap is why a burst of frames is served without closing in between.
-Components that genuinely need the camera held open — head tracking, when it
-arrives — take a lease, which suppresses the idle release while held.
+Components that genuinely need the camera held open — head tracking — take a
+lease, which suppresses the idle release for as long as it is held.
 
 Several images can go into a single Gemini request at roughly 1,100 tokens
 each, and labelling them in the prompt works, so `/frames` is useful for a
@@ -176,6 +176,55 @@ The frames are given to the model as *optional* context. The system prompt tells
 Gary to use them only when they help answer what was actually said, and never to
 remark on what he can see otherwise — so "how are you?" gets a normal answer
 while "what is on the table?" gets a real one.
+
+## Head tracking
+
+Gary follows the largest face he can see, for as long as an interaction lasts.
+It runs inside `vision/` rather than as its own service because it needs raw
+frames: going out through `/frame.jpg` would cost a JPEG encode and decode,
+about 59 ms, which is more than the detection itself.
+
+**Nothing starts a session on its own.** Every trigger starts one — someone
+speaking, or a button press with no words in it — and the console has a button
+that does only this. A second trigger during a session extends it rather than
+restarting anything, so a follow-up question buys more time without
+interrupting the tracking already under way.
+
+A session needs two clocks and no states: five seconds without a face ends it,
+and 45 seconds since the last trigger ends it. That keeps the camera closed
+except while someone is actually in front of him, and it means tracking never
+outlives the conversation. It ends by letting go of the head, dropping the
+camera lease, and playing `body_reset` — in that order, because the reset is a
+gesture and outranks tracking, so resetting first would reach the pose and then
+hand the head straight back to a tracker still aimed at a face.
+
+Detection is deliberately cheap: 640 px wide with coarse parameters and no
+preprocessing, about 38 ms, which finds a face at every distance from 1 to 4 m.
+A session that cannot find anyone escalates once, after 1.5 s, to an equalised
+pass at 960 px — the only thing that sees a badly lit face, but ~345 ms a frame
+against the ordinary pass's ~38 ms, so about 3 fps. It belongs behind a failure
+to acquire and never as a default, because equalisation *broke* detection on a
+well-lit frame. Two consecutive detections must agree to within 0.12 of a frame
+before anything moves, which is what stops a false positive on dark texture
+from walking the head to the end of its travel.
+
+### Where "looking at you" actually is
+
+The camera is not on the head's rotation axis, so a face Gary is genuinely
+aimed at does not land in the middle of the picture. Centring one there would
+leave him pointing past people.
+
+Worse, the offset is a physical displacement rather than an angular one, so how
+far off-centre it lands **depends on distance** — a single correction cannot
+serve both a close and a normal conversational distance. `SWEET_SPOTS` in
+`vision/tracker.py` is therefore a small table keyed on how wide the face is as
+a fraction of the frame, interpolated linearly between measured points and held
+flat outside them rather than extrapolated.
+
+Measure your own rather than copying these: aim the head at someone standing at
+a given distance, read `last_raw` from `GET :5002/tracking`, and confirm the
+detection is really a face before trusting the number — a careful-pass false
+positive on an eye will otherwise calibrate you to the wrong thing.
 
 ## Voice
 
@@ -322,14 +371,17 @@ character.
 
 These are real and worth understanding before you invest time:
 
-- **Head tracking is not built yet.** The camera works and `vision/` serves frames,
-  but nothing follows a face. The old `Sight` class in `servo_api/gary_api.py` is
-  still commented out; it contains working Haar-cascade detection and head-tracking
-  worth salvaging. It does not need a newer OpenCV, despite the `cv2.data`
-  reference that broke it — that attribute only returns the path to the bundled
-  cascade files, and the system OpenCV 3.2 loads a cascade fine from an explicit
-  path. It does need rewriting to send servo commands over HTTP rather than opening
-  a second connection to the serial port.
+- **`/api/video` and `/api/video/stream` always return 500.** They are the last
+  of the original camera attempt: the `Sight` class they call sits inside a
+  string literal in `servo_api/gary_api.py`, so the name does not exist and the
+  `sight` property raises `NameError` on every request. The servo API's own
+  index page still links to one of them. Nothing else references either route.
+  [Head tracking](#head-tracking) replaced all of it properly in `vision/`,
+  which is where it has to live — only one process can hold `/dev/video0`, so a
+  second `VideoCapture` inside `servo_api` would fight the vision service even
+  if the code ran. The class, the property, both routes and the index link are
+  all deletable together; deleting the class alone would leave the callers
+  dangling.
 - **Requires the AIY Voice HAT.** The button, LED and text-to-speech all come from
   `aiy.*`. Without that discontinued board the code fails at import. Making this
   portable means abstracting a trigger source and a TTS backend.

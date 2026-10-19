@@ -6,6 +6,9 @@ import jsonify
 import requests
 import time
 import urllib.request
+import urllib.error  # explicit: urllib.request happens to pull this in, but
+                     # HTTPError is caught by name below and should not rely
+                     # on that
 
 #import google.generativeai as genai
 import cachetools
@@ -22,6 +25,30 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 # Create a 5 minute cache for the conversations
 cache = cachetools.TTLCache(maxsize=10, ttl=300)
+
+# What Gary says when Gemini could not be reached. Named so the exchange that
+# produced it can be kept OUT of the history - otherwise the next question
+# carries a model turn in which Gary said he was confused, and he answers
+# accordingly.
+GEMINI_FALLBACK = "My brain is fuzzy right now. Ask me again in a moment."
+
+# Which failures get a second attempt, how long to wait first, and what Gary
+# says while waiting. Only these two: both come back in about a second, so the
+# retry is nearly free, and both are explicitly temporary - Google's own 503
+# body reads "currently experiencing high demand ... usually temporary", and a
+# 429 is rate limiting, which passes on its own.
+#
+# A timeout is deliberately NOT here. It costs the entire budget to discover,
+# so retrying one doubles the worst case a person actually stands through, and
+# unlike a demand spike it tends not to clear within seconds.
+#
+# The waits differ because the causes differ: a demand spike passes quickly,
+# while a rate limit is a rate, and hitting it again immediately just earns
+# another one.
+GEMINI_RETRY = {
+    503: (2.0, "Let me think about that again."),
+    429: (5.0, "You've been asking me a lot, just a second while I think."),
+}
 
 # Who Gary thinks he is lives in a text file, not in this module. It is the
 # first thing anyone adapting this robot will want to change and the last
@@ -276,14 +303,24 @@ def google_generate_content(prompt, images=None):
 
     json_body = json.dumps(json_body).encode('utf-8')
 
-    # This call used to have no timeout, so a stalled connection hung for as
-    # long as the network felt like it. Gemini normally answers in about a
-    # second, but occasional ~33s stalls were measured from this Pi - not DNS,
-    # not IPv6, and not an unreachable endpoint, all of which were ruled out,
-    # so most likely something on the way out of the building. A bounded
-    # attempt plus a retry turns a 33s wait into about GEMINI_TIMEOUT + 1s.
+    # Two failure shapes, both worth another go, and they cost very different
+    # amounts to learn about:
+    #
+    #   503 and friends come back in about a second. Google's own body text
+    #   says "currently experiencing high demand ... usually temporary", which
+    #   is the definition of retryable, and a second attempt is nearly free.
+    #
+    #   A timeout costs the whole budget before it tells us anything, so a
+    #   retry roughly doubles the worst case. It is still worth it, because
+    #   that is the failure that actually reaches people - but it is the
+    #   reason Gary says something first rather than standing there silently.
+    #
+    # Anything else - a 400, a malformed key - will fail the same way twice,
+    # so it stops immediately instead of burning a second budget.
     last_error = None
+    tried = 0
     for attempt in range(GEMINI_ATTEMPTS):
+        tried += 1
         req = urllib.request.Request(url)
         req.add_header('Content-Type', 'application/json')
         req.add_header('Content-Length', len(json_body))
@@ -293,16 +330,39 @@ def google_generate_content(prompt, images=None):
             first_response = json_response["candidates"][0]["content"]["parts"][0]["text"]
             print(first_response)
             return first_response
-        except Exception as e:
+        except urllib.error.HTTPError as e:
             last_error = e
-            logging.warning("gemini attempt %d failed: %s", attempt + 1, e)
+            plan = GEMINI_RETRY.get(e.code)
+            if plan is None or attempt + 1 >= GEMINI_ATTEMPTS:
+                logging.warning("gemini attempt %d failed: HTTP %d, not retrying",
+                                attempt + 1, e.code)
+                break
+            pause, line = plan
+            logging.warning("gemini attempt %d failed: HTTP %d, retrying in %.0fs",
+                            attempt + 1, e.code, pause)
+            # On a thread: speaking blocks until the audio has finished, and
+            # the point is to cover the wait rather than add to it, so the
+            # pause and the sentence run together instead of end to end.
+            saying = threading.Thread(target=speak, args=(line,))
+            saying.daemon = True
+            saying.start()
+            time.sleep(pause)
+        except Exception as e:
+            # A timeout, or anything that is not an HTTP status. Not retried -
+            # see GEMINI_RETRY above.
+            last_error = e
+            logging.warning("gemini attempt %d failed: %s, not retrying",
+                            attempt + 1, e)
+            break
 
     # Answer with something rather than raising, which would return a 500 and
     # leave Gary standing there silently. This also covers the 503s Gemini
     # returns under load.
-    logging.error("gemini unreachable after %d attempts: %s",
-                  GEMINI_ATTEMPTS, last_error)
-    return "My brain is fuzzy right now. Ask me again in a moment."
+    # The count of attempts actually MADE, not the configured maximum - a
+    # timeout stops after one, and logging the ceiling made it look as though
+    # a retry had happened when none had.
+    logging.error("gemini unreachable after %d attempt(s): %s", tried, last_error)
+    return GEMINI_FALLBACK
 
 
 def speak(text):

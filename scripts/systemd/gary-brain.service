@@ -32,7 +32,13 @@ Environment=FLASK_ENV=production
 # worst case, minus the apology. It costs nothing in the normal case, because
 # a healthy call returns long before either number matters.
 Environment=GARY_GEMINI_TIMEOUT=30
-Environment=GARY_GEMINI_ATTEMPTS=1
+# Back to two attempts, having been one since September. The reasoning then was
+# that retrying into a correlated stall made things worse; what changed is that
+# the failures now include 503s whose own body says "currently experiencing high
+# demand ... usually temporary", and those come back in about a second, so a
+# second attempt is nearly free. A timeout still costs the full budget twice,
+# which is why Gary now says he is thinking again rather than going quiet.
+Environment=GARY_GEMINI_ATTEMPTS=2
 ExecStart=/usr/bin/flask run --port 5001 --no-reload
 Restart=on-failure
 RestartSec=5

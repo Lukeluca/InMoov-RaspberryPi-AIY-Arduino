@@ -11,7 +11,7 @@ import urllib.error  # explicit: urllib.request happens to pull this in, but
                      # on that
 
 #import google.generativeai as genai
-import cachetools
+import collections
 import threading
 
 from flask import Flask, redirect, render_template, request, url_for
@@ -23,8 +23,29 @@ from aiy.board import Board, Led
 app = Flask(__name__)
 #genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# Create a 5 minute cache for the conversations
-cache = cachetools.TTLCache(maxsize=10, ttl=300)
+# A conversation is an ordered list of turns, which is why this is no longer a
+# cache. The cache it replaced was keyed by the question, and that had two
+# consequences that were invisible until measured:
+#
+#   * asking the same thing twice updated the entry in place and MOVED it, so
+#     Gemini was replayed a conversation in an order that never happened,
+#   * each turn expired on its own five-minute timer, so a slow conversation
+#     lost its front continuously instead of ever cleanly ending.
+#
+# A deque with maxlen forgets the BEGINNING of a long conversation, which is
+# the right end to lose, and the idle timeout below drops the whole thing at
+# once rather than eroding it.
+HISTORY_EXCHANGES = int(os.environ.get("GARY_HISTORY_EXCHANGES", "10"))
+# Silence this long means the conversation is over. The next person to walk up
+# is starting a new one and should not inherit half of someone else's.
+HISTORY_IDLE_SECONDS = float(os.environ.get("GARY_HISTORY_IDLE_SECONDS", "300"))
+
+# (prompt, reply) pairs, oldest first. Frames are deliberately never kept: at
+# about 1100 tokens each, a ten-exchange history carrying them would cost
+# ~22000 tokens per request, where text-only turns cost about eight.
+_history = collections.deque(maxlen=HISTORY_EXCHANGES)
+_history_lock = threading.Lock()
+_last_exchange_at = 0.0
 
 # What Gary says when Gemini could not be reached. Named so the exchange that
 # produced it can be kept OUT of the history - otherwise the next question
@@ -102,6 +123,30 @@ def system_prompt():
         return DEFAULT_SYSTEM_PROMPT
 
 
+def history_turns():
+    """The conversation so far, as alternating user and model turns.
+
+    Clears the whole conversation first if nothing has been said for a while.
+    """
+    with _history_lock:
+        if _history and time.monotonic() - _last_exchange_at > HISTORY_IDLE_SECONDS:
+            logging.info("conversation idle for %.0fs, starting fresh",
+                         HISTORY_IDLE_SECONDS)
+            _history.clear()
+        turns = []
+        for prompt, reply in _history:
+            turns.append({"role": "user", "parts": [{"text": prompt}]})
+            turns.append({"role": "model", "parts": [{"text": reply}]})
+        return turns
+
+
+def record_exchange(prompt, reply):
+    """Add one completed exchange. Under a lock because the brain is threaded
+    and a second question can arrive while the first is still being spoken."""
+    global _last_exchange_at
+    with _history_lock:
+        _history.append((prompt, reply))
+        _last_exchange_at = time.monotonic()
 
 VISION_URL = os.environ.get("GARY_VISION_URL", "http://localhost:5002")
 FRAME_TIMEOUT = 8
@@ -246,8 +291,12 @@ def index():
             # No session running, so nothing else will put his head back.
             head_recenter()
         
-        #cache for future discussions, using the prompt as the key, and the result as the value
-        cache[gary_prompt] = result
+        # Remember the exchange, so a follow-up question has something to refer
+        # back to - but only if Gemini actually answered. Recording the fallback
+        # would put a model turn in the history where Gary said he was confused,
+        # and he would then answer the next question in light of having said it.
+        if result != GEMINI_FALLBACK:
+            record_exchange(gary_prompt, result)
 
 
         #for POST request, return a JSON result
@@ -255,20 +304,6 @@ def index():
 
     result = request.args.get("result")
     return render_template("index.html", result=result)
-
-def google_generate_chat_content():
-    json_data = []
-    for key, value in cache.items():
-        #print("previous prompt: " + key)
-        json_data.append({
-            "role": "user",
-            "parts": [{ "text": key }]
-            })
-        json_data.append({
-            "role": "model",
-            "parts": [{ "text": value }]
-            })
-    return json_data
 
 
 def user_parts(prompt, images=None):
@@ -291,13 +326,18 @@ def google_generate_content(prompt, images=None):
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent"
     url += "?key=" + os.getenv("GOOGLE_API_KEY")
     
-    json_chat = google_generate_chat_content()
+    json_chat = history_turns()
     
     json_body = {
         "system_instruction": {
             "parts": { "text": system_prompt() }
             },
-        "contents": [ json_chat, { "role":"user", "parts": user_parts(prompt, images) }] }
+        # Concatenated, not nested. The old form put the history list inside
+        # the contents list as a single element; Gemini was lenient enough to
+        # parse it (the token counts proved the turns were being read), but
+        # this is the shape the API actually documents.
+        "contents": json_chat + [{"role": "user",
+                                  "parts": user_parts(prompt, images)}] }
     
     #print(json_body)
 
